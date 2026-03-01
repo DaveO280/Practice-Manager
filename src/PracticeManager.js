@@ -155,7 +155,8 @@ const PracticeManager = () => {
     return localStorage.getItem('autoImportEnabled') === 'true';
   });
   
-  const _toggleAutoImport = () => {
+  // eslint-disable-next-line no-unused-vars -- reserved for future UI toggle
+  const toggleAutoImport = () => {
     const newValue = !autoImportEnabled;
     setAutoImportEnabled(newValue);
     localStorage.setItem('autoImportEnabled', newValue.toString());
@@ -165,7 +166,7 @@ const PracticeManager = () => {
       alert('Auto-import disabled.');
     }
   };
-  
+
   // Auto-import function
   const autoImportBackups = async () => {
     if (!autoImportEnabled) return;
@@ -1906,8 +1907,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
       // 1. Extract all dates from headers (MON, NOV 17 | TUE, NOV 18 | WED, NOV 19)
       // Make regex more strict - must have day of week, month abbreviation, and day number
       // Pattern: MON, NOV 17 or TUE, NOV 18 (not fractions like 321/44)
-      // Also match "MON, NOV 17" at the start of a line or after whitespace
-      const _dateRegex = /(?:^|\s)(MON|TUE|WED|THU|FRI|SAT|SUN)[,\s]+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[,\s]+(\d{1,2})(?:\s|$)/gi;
+      // Also match "MON, NOV 17" at the start of a line or after whitespace (pattern used via globalDateRegex below)
       const monthMap = {
         'JAN': 0, 'FEB': 1, 'MAR': 2, 'APR': 3, 'MAY': 4, 'JUN': 5,
         'JUL': 6, 'AUG': 7, 'SEP': 8, 'OCT': 9, 'NOV': 10, 'DEC': 11
@@ -2007,7 +2007,6 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
       if (detectedDates.length === 0) {
         globalDateRegex.lastIndex = 0;
         while ((dateMatch = globalDateRegex.exec(allText)) !== null) {
-        const _dayOfWeek = dateMatch[1].toUpperCase();
         const monthStr = dateMatch[2].toUpperCase();
         const day = parseInt(dateMatch[3]);
         
@@ -2089,12 +2088,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
       console.log(`Format detection: Last date at line ${lastDateLine + 1} of ${totalLines} (${(dateBlockRatio * 100).toFixed(1)}%)`);
       console.log(`Using ${isGroupedByHour ? 'ROTATION' : 'DATE-TRACKING'} method${hasVerticalDates ? ' (vertical format detected)' : ''}`);
       
-      // Patterns to match:
-      // 1. "10:30 Jen" or "10:45 Emily" - time:minute name
-      // 2. "12 Ashton" or "1 Joanne 6/6" - hour name [notes]
-      // 3. "5:00 Ari pd" - time:minute name notes
-      const _timeNamePattern = /(\d{1,2}):(\d{2})\s+(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i;
-      const _hourNamePattern = /^(\d{1,2})\s+(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i;
+      // Patterns to match: "10:30 Jen", "12 Ashton", "5:00 Ari pd" (matched inline via timeNameMatch, hourNameMatch, etc.)
       const hourOnlyPattern = /^(\d{1,2})$/;
       
       // Skip words that aren't client names
@@ -2178,7 +2172,6 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
         }
         const dateMatch = lineContent.match(datePattern);
         if (dateMatch) {
-          const _dayOfWeek = dateMatch[1].toUpperCase();
           const monthStr = dateMatch[2].toUpperCase();
           const day = parseInt(dateMatch[3]);
           
