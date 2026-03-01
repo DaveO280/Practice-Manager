@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-import { Camera, Users, Calendar, Download, Plus, X, Check, AlertCircle, Sparkles, Clock, DollarSign, Edit2, Trash2, FileText, Mail } from 'lucide-react';
+import { Camera, Users, Calendar, Download, Plus, X, Check, Sparkles, Clock, DollarSign, Edit2, Trash2, FileText, Mail } from 'lucide-react';
 
 // Import HEIC converter
 import heic2any from 'heic2any';
@@ -116,7 +116,7 @@ const openDB = () => {
       }
       
       if (!db.objectStoreNames.contains('cptCodes')) {
-        const cptStore = db.createObjectStore('cptCodes', { keyPath: 'code' });
+        db.createObjectStore('cptCodes', { keyPath: 'code' });
       }
     };
   });
@@ -155,7 +155,7 @@ const PracticeManager = () => {
     return localStorage.getItem('autoImportEnabled') === 'true';
   });
   
-  const toggleAutoImport = () => {
+  const _toggleAutoImport = () => {
     const newValue = !autoImportEnabled;
     setAutoImportEnabled(newValue);
     localStorage.setItem('autoImportEnabled', newValue.toString());
@@ -365,6 +365,7 @@ const PracticeManager = () => {
     };
     
     loadData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
   const saveClient = async (client) => {
@@ -767,6 +768,8 @@ const SessionsView = ({ sessions, clients, saveSession, deleteSession, setSessio
             });
           }
         }
+        break;
+      default:
         break;
     }
     
@@ -1904,7 +1907,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
       // Make regex more strict - must have day of week, month abbreviation, and day number
       // Pattern: MON, NOV 17 or TUE, NOV 18 (not fractions like 321/44)
       // Also match "MON, NOV 17" at the start of a line or after whitespace
-      const dateRegex = /(?:^|\s)(MON|TUE|WED|THU|FRI|SAT|SUN)[,\s]+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[,\s]+(\d{1,2})(?:\s|$)/gi;
+      const _dateRegex = /(?:^|\s)(MON|TUE|WED|THU|FRI|SAT|SUN)[,\s]+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[,\s]+(\d{1,2})(?:\s|$)/gi;
       const monthMap = {
         'JAN': 0, 'FEB': 1, 'MAR': 2, 'APR': 3, 'MAY': 4, 'JUN': 5,
         'JUL': 6, 'AUG': 7, 'SEP': 8, 'OCT': 9, 'NOV': 10, 'DEC': 11
@@ -2004,7 +2007,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
       if (detectedDates.length === 0) {
         globalDateRegex.lastIndex = 0;
         while ((dateMatch = globalDateRegex.exec(allText)) !== null) {
-        const dayOfWeek = dateMatch[1].toUpperCase();
+        const _dayOfWeek = dateMatch[1].toUpperCase();
         const monthStr = dateMatch[2].toUpperCase();
         const day = parseInt(dateMatch[3]);
         
@@ -2090,8 +2093,8 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
       // 1. "10:30 Jen" or "10:45 Emily" - time:minute name
       // 2. "12 Ashton" or "1 Joanne 6/6" - hour name [notes]
       // 3. "5:00 Ari pd" - time:minute name notes
-      const timeNamePattern = /(\d{1,2}):(\d{2})\s+(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i;
-      const hourNamePattern = /^(\d{1,2})\s+(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i;
+      const _timeNamePattern = /(\d{1,2}):(\d{2})\s+(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i;
+      const _hourNamePattern = /^(\d{1,2})\s+(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i;
       const hourOnlyPattern = /^(\d{1,2})$/;
       
       // Skip words that aren't client names
@@ -2175,7 +2178,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
         }
         const dateMatch = lineContent.match(datePattern);
         if (dateMatch) {
-          const dayOfWeek = dateMatch[1].toUpperCase();
+          const _dayOfWeek = dateMatch[1].toUpperCase();
           const monthStr = dateMatch[2].toUpperCase();
           const day = parseInt(dateMatch[3]);
           
@@ -2236,7 +2239,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
         // Pattern 0: ":15 Name", ":30 Name", ":45 Name" - minute marker with name on same line
         // This pattern appears when hour is on previous line, then ":30 Jen" on current line
         // Also handle ":30#Name" (no space) and ":30" on one line with name on next
-        const minuteNameMatch = lineContent.match(/^:(\d{2})(?:\s*#?\s*)(.+?)(?:\s+(pd|upd|\d+\/\d+|\$[\d\.]+))?\s*$/i);
+        const minuteNameMatch = lineContent.match(/^:(\d{2})(?:\s*#?\s*)(.+?)(?:\s+(pd|upd|\d+\/\d+|\$[\d.]+))?\s*$/i);
         if (minuteNameMatch && lastHourNumber !== null) {
           const minutes = parseInt(minuteNameMatch[1]);
           let clientName = minuteNameMatch[2] ? minuteNameMatch[2].trim() : null;
@@ -2246,11 +2249,11 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
             // Remove leading minute marker if repeated (e.g. "15 Ashton" from ":15 15 Ashton")
             clientName = clientName.replace(/^(15|30|45)\s+/, '');
             // Remove notes at the end
-            clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+|\$[\d\.]+)$/i, '').trim();
+            clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+|\$[\d.]+)$/i, '').trim();
             // Remove leading # or other special chars
             clientName = clientName.replace(/^[#\s]+/, '').trim();
             // Extract only the name part (letters, spaces, & for compound names like "Neal & Bienee")
-            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s&\+]+)/);
+            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s&+]+)/);
             if (nameMatch) {
               clientName = nameMatch[1].trim();
             }
@@ -2336,14 +2339,14 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
             nextLine = nextColPrefix[2];
           }
           // Check if next line has a name (not just numbers, minute markers, or common words)
-          const namePattern = /^([A-Za-z][A-Za-z\s&\+]+?)(?:\s+(pd|upd|\d+\/\d+|\$[\d\.]+))?\s*$/i;
+          const namePattern = /^([A-Za-z][A-Za-z\s&+]+?)(?:\s+(pd|upd|\d+\/\d+|\$[\d.]+))?\s*$/i;
           const nameMatch = nextLine.match(namePattern);
           
           if (nameMatch) {
             let clientName = nameMatch[1].trim();
             
             // Clean up name
-            clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+|\$[\d\.]+)$/i, '').trim();
+            clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+|\$[\d.]+)$/i, '').trim();
             clientName = clientName.replace(/^[#\s]+/, '').trim();
             
             // Skip if it looks like a date or common word
@@ -2422,7 +2425,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
             // Remove notes at the end
             clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+)$/i, '').trim();
             // Extract only the name part (letters, spaces, + for compound names)
-            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s\+]+)/);
+            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s+]+)/);
             if (nameMatch) {
               clientName = nameMatch[1].trim();
             }
@@ -2489,7 +2492,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
             // Remove notes at the end
             clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+)$/i, '').trim();
             // Extract only the name part
-            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s\+]+)/);
+            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s+]+)/);
             if (nameMatch) {
               clientName = nameMatch[1].trim();
             }
@@ -2550,7 +2553,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
           const nextLine = lines[i + 1];
           
           // Check if next line has a name (not just numbers or common words)
-          const namePattern = /^([A-Za-z][A-Za-z\s\+]+?)(?:\s+(pd|upd|\d+\/\d+|\d+:\d+))?$/i;
+          const namePattern = /^([A-Za-z][A-Za-z\s+]+?)(?:\s+(pd|upd|\d+\/\d+|\d+:\d+))?$/i;
           const nameMatch = nextLine.match(namePattern);
           
           if (nameMatch && hour >= 7 && hour <= 20) {
@@ -2611,10 +2614,10 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
         // Pattern 4: Name-only lines (no time) - when in date-tracking mode with currentDate
         // e.g. "Jen", "Ashton", "Joanie O/", "Tess", "No Dent?"
         if (!isGroupedByHour && currentDate && lineColIdx === null) {
-          const nameOnlyMatch = lineContent.match(/^([A-Za-z][A-Za-z\s'&\-]+?)(?:\s*[O\/\?\!]|\s+\d|\s*$)/i);
+          const nameOnlyMatch = lineContent.match(/^([A-Za-z][A-Za-z\s'&-]+?)(?:\s*[O/?!]|\s+\d|\s*$)/i);
           if (nameOnlyMatch) {
             let clientName = nameOnlyMatch[1].trim();
-            clientName = clientName.replace(/\s*[O\/\?\!]\s*$/, '').trim();
+            clientName = clientName.replace(/\s*[O/?!]\s*$/, '').trim();
             if (clientName.length >= 2 && !skipWords.test(clientName) && !/^\d+$/.test(clientName)) {
               appointments.push({
                 id: Date.now() + Math.random() + appointments.length,
@@ -4865,6 +4868,8 @@ const ExportView = ({ sessions, clients }) => {
             return date >= start && date <= end;
           });
         }
+        break;
+      default:
         break;
     }
     
