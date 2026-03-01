@@ -1,0 +1,686 @@
+{
+  "version": "1.0",
+  "exportDate": "2026-02-14T17:31:16.476Z",
+  "clients": [
+    {
+      "id": "client-1764014449618-0.30436615769533537",
+      "name": "jen",
+      "fullName": null,
+      "rate": 300,
+      "email": "jen@gmail.com",
+      "billingType": "direct",
+      "active": false,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "10:30 AM",
+          "frequency": 2,
+          "lastOccurrence": "2025-11-10"
+        },
+        {
+          "dayOfWeek": 1,
+          "time": "10:30 AM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-16"
+        }
+      ],
+      "sessionCount": 3,
+      "lastSeen": "2025-12-16",
+      "dateOfBirth": null,
+      "diagnosis": ""
+    },
+    {
+      "id": "client-1764014465102-0.8482367416542484",
+      "name": "Cody",
+      "fullName": "Elana Yardley",
+      "rate": 275,
+      "email": "Cody.yardley@gmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "4:00 PM",
+          "frequency": 3,
+          "lastOccurrence": "2025-11-17"
+        },
+        {
+          "dayOfWeek": 2,
+          "time": "2:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-17"
+        }
+      ],
+      "sessionCount": 4,
+      "lastSeen": "2025-12-17",
+      "dateOfBirth": "1990-07-16",
+      "diagnosis": "F41.1; F43.12; F33.1; F84.0"
+    },
+    {
+      "id": "client-1764019806980-0.8065583779476099",
+      "name": "Ashton",
+      "fullName": "Ashton Rosen",
+      "rate": 275,
+      "email": "susanmgochenour@gmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "12:00 PM",
+          "frequency": 3,
+          "lastOccurrence": "2025-12-15"
+        },
+        {
+          "dayOfWeek": 3,
+          "time": "3:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-18"
+        }
+      ],
+      "sessionCount": 4,
+      "lastSeen": "2025-12-18",
+      "dateOfBirth": "1997-06-25",
+      "diagnosis": "F84.0; F90.0"
+    },
+    {
+      "id": "client-1764019829883-0.9019289401884405",
+      "name": "Joanie",
+      "fullName": "Joan Sullivan",
+      "rate": 250,
+      "email": "sheelahrileysulllivan@yahoo.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "1:00 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-11-17"
+        },
+        {
+          "dayOfWeek": 0,
+          "time": "4:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-15"
+        }
+      ],
+      "sessionCount": 2,
+      "lastSeen": "2025-12-15",
+      "dateOfBirth": "2003-08-22",
+      "diagnosis": "F41.1; F43.12"
+    },
+    {
+      "id": "client-1764019850868-0.7922189097453372",
+      "name": "Tess",
+      "fullName": "Tess Goodnowott",
+      "rate": 250,
+      "email": "tessue@bu.edu",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "2:00 PM",
+          "frequency": 2,
+          "lastOccurrence": "2025-12-15"
+        },
+        {
+          "dayOfWeek": 3,
+          "time": "2:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-18"
+        }
+      ],
+      "sessionCount": 3,
+      "lastSeen": "2025-12-18",
+      "dateOfBirth": "1995-11-10",
+      "diagnosis": "F31.83; F84.0; F33.3; F42.9"
+    },
+    {
+      "id": "client-1764019868971-0.5188290667645538",
+      "name": "Elyse",
+      "fullName": "Elyse Endlich",
+      "rate": 250,
+      "email": "elysecat@gmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "4:50 PM",
+          "frequency": 2,
+          "lastOccurrence": "2025-12-15"
+        }
+      ],
+      "sessionCount": 2,
+      "lastSeen": "2025-12-15",
+      "dateOfBirth": "1999-10-09",
+      "diagnosis": "F84.0; F42.9; F90.0"
+    },
+    {
+      "id": "client-1764019893619-0.8339683541015898",
+      "name": "Jack",
+      "fullName": "Oliver Jack Cady",
+      "rate": 275,
+      "email": "jack@cady.info",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "6:00 PM",
+          "frequency": 2,
+          "lastOccurrence": "2025-12-15"
+        }
+      ],
+      "sessionCount": 2,
+      "lastSeen": "2025-12-15",
+      "dateOfBirth": "1998-06-14",
+      "diagnosis": "F84.0; F41.1; F90.0"
+    },
+    {
+      "id": "client-1764019914829-0.8206680434385412",
+      "name": "Jenna",
+      "fullName": "Jenna Dehne",
+      "rate": 275,
+      "email": "smd46028@comcast.net",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null,
+      "dateOfBirth": "1990-11-09",
+      "diagnosis": "F84.0; F33.1; F10.21"
+    },
+    {
+      "id": "client-1764019936576-0.7079068060572583",
+      "name": "team",
+      "fullName": null,
+      "rate": 200,
+      "email": "team@team.com",
+      "billingType": "direct",
+      "active": false,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null,
+      "dateOfBirth": null,
+      "diagnosis": ""
+    },
+    {
+      "id": "client-1764019961014-0.01696710450399841",
+      "name": "Kai",
+      "fullName": "Kathrine Gallagher",
+      "rate": 250,
+      "email": "Jackie.gallagher@ams-osram.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 1,
+          "time": "1:00 PM",
+          "frequency": 4,
+          "lastOccurrence": "2025-12-16"
+        }
+      ],
+      "sessionCount": 4,
+      "lastSeen": "2025-12-16",
+      "dateOfBirth": "2005-06-09",
+      "diagnosis": "F41.1; F90.2; F33.1"
+    },
+    {
+      "id": "client-1764019987399-0.08653267067311066",
+      "name": "Julian",
+      "fullName": "Julian Applebaum",
+      "rate": 225,
+      "email": "tapplebaum@convergeconsulting.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 1,
+          "time": "3:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-16"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-16",
+      "dateOfBirth": "2001-01-22",
+      "diagnosis": "F84.0; F41.0"
+    },
+    {
+      "id": "client-1764020008829-0.2978567323601313",
+      "name": "ori",
+      "fullName": "Maya Gallaugher",
+      "rate": 225,
+      "email": "momofiggy@hotmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 1,
+          "time": "4:00 PM",
+          "frequency": 2,
+          "lastOccurrence": "2025-12-16"
+        },
+        {
+          "dayOfWeek": 2,
+          "time": "4:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-17"
+        }
+      ],
+      "sessionCount": 3,
+      "lastSeen": "2025-12-17",
+      "dateOfBirth": "2005-08-10",
+      "diagnosis": "F84.0; F41.1; F90.0"
+    },
+    {
+      "id": "client-1764020025521-0.2298986170168864",
+      "name": "Liv",
+      "fullName": "Olivia Lund",
+      "rate": 275,
+      "email": "amyclund@gmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "2:00 PM",
+          "frequency": 2,
+          "lastOccurrence": "2025-12-15"
+        },
+        {
+          "dayOfWeek": 0,
+          "time": "4:50 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-11-10"
+        },
+        {
+          "dayOfWeek": 1,
+          "time": "5:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-16"
+        },
+        {
+          "dayOfWeek": 2,
+          "time": "12:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-17"
+        },
+        {
+          "dayOfWeek": 3,
+          "time": "12:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-18"
+        },
+        {
+          "dayOfWeek": 3,
+          "time": "5:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-18"
+        }
+      ],
+      "sessionCount": 7,
+      "lastSeen": "2025-12-18",
+      "dateOfBirth": "2005-11-29",
+      "diagnosis": "F41.1; F33.0; F41.0; F90.0"
+    },
+    {
+      "id": "client-1765653482845-0.8113925273895418",
+      "name": "Liam",
+      "fullName": "Liam Droney",
+      "rate": 250,
+      "email": "cddroney@yahoo.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 0,
+          "time": "3:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-15"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-15",
+      "dateOfBirth": "2009-12-30",
+      "diagnosis": "F41.1; F90.0; F33.0"
+    },
+    {
+      "id": "client-1765653585400-0.9982197100370828",
+      "name": "Alec",
+      "fullName": "Abigail Lazorisak's",
+      "rate": 250,
+      "email": "ldoxey@hotmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 1,
+          "time": "2:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-16"
+        },
+        {
+          "dayOfWeek": 3,
+          "time": "4:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-18"
+        }
+      ],
+      "sessionCount": 2,
+      "lastSeen": "2025-12-18",
+      "dateOfBirth": "2007-05-02",
+      "diagnosis": "F84.0; F33.0; F90.0"
+    },
+    {
+      "id": "client-1765653619806-0.5970052075162289",
+      "name": "Emily",
+      "fullName": "Emily Evangelakos",
+      "rate": 250,
+      "email": "peggymade@aol.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 2,
+          "time": "10:45 AM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-17"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-17",
+      "dateOfBirth": "2001-07-27",
+      "diagnosis": "F90.0; F41.1"
+    },
+    {
+      "id": "client-1765653635398-0.31339707569895137",
+      "name": "Sarah",
+      "fullName": "Sarah Steck",
+      "rate": 170,
+      "email": "Stecko77@gmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 2,
+          "time": "1:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-17"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-17",
+      "dateOfBirth": "1997-02-23",
+      "diagnosis": "F84.0; F90.2; F41.1"
+    },
+    {
+      "id": "client-1765653655532-0.40163799293489433",
+      "name": "Auri",
+      "fullName": "Abigail Masterson",
+      "rate": 250,
+      "email": "Carolyn.dunbarmasterso@aol.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 2,
+          "time": "3:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-17"
+        },
+        {
+          "dayOfWeek": 4,
+          "time": "12:00",
+          "frequency": 1,
+          "lastOccurrence": "2026-01-30"
+        }
+      ],
+      "sessionCount": 2,
+      "lastSeen": "2026-01-30",
+      "dateOfBirth": "2003-05-16",
+      "diagnosis": "F33.1; F42.9; F84.0"
+    },
+    {
+      "id": "client-1765653669018-0.7247803878860513",
+      "name": "Miranda",
+      "fullName": "Miranda Bachman",
+      "rate": 250,
+      "email": "williambachman@gmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 2,
+          "time": "5:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-17"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-17",
+      "dateOfBirth": "1995-09-21",
+      "diagnosis": "F84.0; F31.81; F90.0"
+    },
+    {
+      "id": "client-1765653679504-0.9827220611210346",
+      "name": "Lila",
+      "fullName": "Lila O'Neil",
+      "rate": 225,
+      "email": "7/3/2002",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 2,
+          "time": "6:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-17"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-17",
+      "dateOfBirth": "F84.0; F31.81; F41.1; F33.0",
+      "diagnosis": "7/3/2002"
+    },
+    {
+      "id": "client-1765653693082-0.42601432609079537",
+      "name": "Lauren",
+      "fullName": "Lauren Brody",
+      "rate": 250,
+      "email": "Lalaboston@gmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 3,
+          "time": "11:15 AM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-18"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-18",
+      "dateOfBirth": "1981-04-10",
+      "diagnosis": "F84.0; F31.83; F90.0"
+    },
+    {
+      "id": "client-1765653753824-0.8675450424412916",
+      "name": "Jules",
+      "fullName": "Jules sage",
+      "rate": 250,
+      "email": "grace.sage@audacy.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 3,
+          "time": "1:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-18"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-18",
+      "dateOfBirth": "2002-11-02",
+      "diagnosis": "F31.3; F90.0"
+    },
+    {
+      "id": "client-1765653799863-0.5188856384734286",
+      "name": "Caroline",
+      "fullName": "Caroline Davitt",
+      "rate": 225,
+      "email": "ceremsak@comcast.net",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 3,
+          "time": "6:15 PM",
+          "frequency": 1,
+          "lastOccurrence": "2025-12-18"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2025-12-18",
+      "dateOfBirth": "1995-03-12",
+      "diagnosis": "F90.2"
+    },
+    {
+      "id": "client-1769806198022-0.475373767363482",
+      "name": "Abby",
+      "fullName": "Abigail Burgess",
+      "rate": 275,
+      "email": "lisabethny@aol.com",
+      "billingType": "direct",
+      "dateOfBirth": "2003-03-19",
+      "diagnosis": "F41.1; F90.0",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null
+    },
+    {
+      "id": "client-1769806198095-0.6617502151050014",
+      "name": "Emmaline",
+      "fullName": "Emmaline crook",
+      "rate": 125,
+      "email": "emmalincrook@me.com",
+      "billingType": "direct",
+      "dateOfBirth": "1996-04-11",
+      "diagnosis": "F41.1; F84.0",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null
+    },
+    {
+      "id": "client-1769806198173-0.18384934326330393",
+      "name": "Kara",
+      "fullName": "Kara Crisafulli",
+      "rate": 275,
+      "email": "joaniecris@aol.com",
+      "billingType": "direct",
+      "dateOfBirth": null,
+      "diagnosis": "F43.12; F41.1; F90.2",
+      "active": true,
+      "timePatterns": [
+        {
+          "dayOfWeek": 4,
+          "time": "12:00",
+          "frequency": 1,
+          "lastOccurrence": "2026-01-30"
+        }
+      ],
+      "sessionCount": 1,
+      "lastSeen": "2026-01-30"
+    },
+    {
+      "id": "client-1769806198243-0.04126352227476926",
+      "name": "Lily",
+      "fullName": "Lily Iijiri-Oehlkers",
+      "rate": 275,
+      "email": "Lisa.iijiri@gmail.com",
+      "billingType": "direct",
+      "dateOfBirth": null,
+      "diagnosis": "F84.0; F41.1; F43.12; F44.5",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null
+    },
+    {
+      "id": "client-1769806198291-0.49389712555868537",
+      "name": "Allie",
+      "fullName": "Allie Maltzman",
+      "rate": 250,
+      "email": "dsmaltzman@yahoo.com",
+      "billingType": "direct",
+      "dateOfBirth": "1999-12-15",
+      "diagnosis": "F84.0; F90.0; F41.1",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null
+    },
+    {
+      "id": "client-1769806198296-0.17981830738259563",
+      "name": "Sam",
+      "fullName": "Sienna Agosti",
+      "rate": 250,
+      "email": "Rudolph.agosti@gmail.com",
+      "billingType": "direct",
+      "dateOfBirth": "2009-06-29",
+      "diagnosis": "F84.0; F33.0; F90.0",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null
+    },
+    {
+      "id": "client-1769806595322-0.4482307008128088",
+      "name": "Ash",
+      "fullName": "Ash Suttin",
+      "rate": 250,
+      "email": "hsuttin@gmail.com",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null,
+      "dateOfBirth": "1996-01-31",
+      "diagnosis": "F84.0; F33.0"
+    },
+    {
+      "id": "client-1769807458188-0.5365098762544901",
+      "name": "Alessandro",
+      "fullName": "Alessandro Frederico Costa",
+      "rate": 250,
+      "email": "",
+      "billingType": "direct",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null,
+      "dateOfBirth": "2006-09-16",
+      "diagnosis": "F90"
+    },
+    {
+      "id": "client-1769807827089-0.3142002552522323",
+      "name": "Olivia",
+      "fullName": "Olivia Dunn",
+      "rate": 275,
+      "email": "renerussopharmd@gmail.com",
+      "billingType": "direct",
+      "dateOfBirth": "2010-04-30",
+      "diagnosis": "F84.0; F41.1; F90.0",
+      "active": true,
+      "timePatterns": [],
+      "sessionCount": 0,
+      "lastSeen": null
+    }
+  ]
+}

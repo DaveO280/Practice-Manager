@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Import Clients - Direct</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h2 {
+            color: #667eea;
+            margin-top: 0;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .client-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .client-item {
+            padding: 5px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .client-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Import Clients from Backup File</h2>
+        <p>This utility will import all clients from your backup JSON file directly into the Practice Manager database.</p>
+        
+        <div style="margin: 20px 0;">
+            <input type="file" id="fileInput" accept=".json" style="margin: 10px 0;">
+            <br>
+            <button onclick="importClients()" id="importBtn">Import Clients</button>
+            <button onclick="loadDefaultFile()" id="loadDefaultBtn">Load Default File (clients_backup_2025-12-13.json)</button>
+        </div>
+        
+        <div id="status"></div>
+        <div id="clientList" class="client-list" style="display: none;"></div>
+    </div>
+
+    <script>
+        // Database configuration (must match PracticeManager.js)
+        const DB_NAME = 'PracticeManagerDB';
+        const DB_VERSION = 1;
+        const CLIENT_STORE = 'clients';
+        
+        function showStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = type;
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+        }
+        
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve(request.result);
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(CLIENT_STORE)) {
+                        db.createObjectStore(CLIENT_STORE, { keyPath: 'id' });
+                    }
+                };
+            });
+        }
+        
+        async function saveClient(db, client) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([CLIENT_STORE], 'readwrite');
+                const store = transaction.objectStore(CLIENT_STORE);
+                const request = store.put(client);
+                
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        }
+        
+        async function getAllClients(db) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([CLIENT_STORE], 'readonly');
+                const store = transaction.objectStore(CLIENT_STORE);
+                const request = store.getAll();
+                
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+        
+        async function importClientsFromData(clientDataArray) {
+            try {
+                showStatus('Opening database...', 'info');
+                const db = await openDB();
+                
+                showStatus('Getting existing clients...', 'info');
+                const existingClients = await getAllClients(db);
+                
+                let importedCount = 0;
+                let updatedCount = 0;
+                let skippedCount = 0;
+                const importedNames = [];
+                const updatedNames = [];
+                
+                showStatus(`Importing ${clientDataArray.length} clients...`, 'info');
+                
+                for (const clientData of clientDataArray) {
+                    if (!clientData.name) {
+                        skippedCount++;
+                        continue;
+                    }
+                    
+                    const clientToSave = {
+                        id: clientData.id || `client-${Date.now()}-${Math.random()}`,
+                        name: clientData.name,
+                        rate: clientData.rate || 0,
+                        email: clientData.email || '',
+                        billingType: clientData.billingType || 'direct',
+                        active: clientData.active !== undefined ? clientData.active : true,
+                        timePatterns: clientData.timePatterns || [],
+                        sessionCount: clientData.sessionCount || 0,
+                        lastSeen: clientData.lastSeen || null,
+                        dateOfBirth: clientData.dateOfBirth || null,
+                        diagnosis: clientData.diagnosis || ''
+                    };
+                    
+                    const exists = existingClients.find(c => c.id === clientToSave.id);
+                    if (exists) {
+                        updatedCount++;
+                        updatedNames.push(clientToSave.name);
+                    } else {
+                        importedCount++;
+                        importedNames.push(clientToSave.name);
+                    }
+                    
+                    await saveClient(db, clientToSave);
+                }
+                
+                // Show results
+                const clientListDiv = document.getElementById('clientList');
+                let listHTML = '';
+                
+                if (importedNames.length > 0) {
+                    listHTML += '<strong>New Clients:</strong><br>';
+                    importedNames.forEach(name => {
+                        listHTML += `<div class="client-item">✓ ${name}</div>`;
+                    });
+                    listHTML += '<br>';
+                }
+                
+                if (updatedNames.length > 0) {
+                    listHTML += '<strong>Updated Clients:</strong><br>';
+                    updatedNames.forEach(name => {
+                        listHTML += `<div class="client-item">↻ ${name}</div>`;
+                    });
+                }
+                
+                if (listHTML) {
+                    clientListDiv.innerHTML = listHTML;
+                    clientListDiv.style.display = 'block';
+                }
+                
+                showStatus(
+                    `Import Complete!\n\n` +
+                    `✓ ${importedCount} new client(s) added\n` +
+                    `✓ ${updatedCount} existing client(s) updated\n` +
+                    `${skippedCount > 0 ? `⚠ ${skippedCount} client(s) skipped (missing name)\n` : ''}\n` +
+                    `\nRefresh your Practice Manager app to see the imported clients.`,
+                    'success'
+                );
+                
+            } catch (error) {
+                console.error('Import error:', error);
+                showStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function importClients() {
+            const fileInput = document.getElementById('fileInput');
+            const importBtn = document.getElementById('importBtn');
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                showStatus('Please select a JSON file first.', 'error');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            importBtn.disabled = true;
+            
+            try {
+                showStatus('Reading file...', 'info');
+                const text = await file.text();
+                const importData = JSON.parse(text);
+                
+                if (!importData.clients || !Array.isArray(importData.clients)) {
+                    throw new Error('Invalid file format. Expected a JSON object with a "clients" array.');
+                }
+                
+                await importClientsFromData(importData.clients);
+                
+            } catch (error) {
+                console.error('Import error:', error);
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                importBtn.disabled = false;
+            }
+        }
+        
+        async function loadDefaultFile() {
+            const loadBtn = document.getElementById('loadDefaultBtn');
+            loadBtn.disabled = true;
+            
+            try {
+                showStatus('Loading default file...', 'info');
+                
+                // Try to fetch the file from the same directory
+                const response = await fetch('./clients_backup_2025-12-13.json');
+                if (!response.ok) {
+                    throw new Error(`File not found. Please use the file input to select the file manually.`);
+                }
+                
+                const importData = await response.json();
+                
+                if (!importData.clients || !Array.isArray(importData.clients)) {
+                    throw new Error('Invalid file format. Expected a JSON object with a "clients" array.');
+                }
+                
+                await importClientsFromData(importData.clients);
+                
+            } catch (error) {
+                console.error('Load error:', error);
+                showStatus(`Error: ${error.message}\n\nPlease use the file input above to select the file manually.`, 'error');
+            } finally {
+                loadBtn.disabled = false;
+            }
+        }
+        
+        // Allow drag and drop
+        const fileInput = document.getElementById('fileInput');
+        const container = document.querySelector('.container');
+        
+        container.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            container.style.borderColor = '#764ba2';
+        });
+        
+        container.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            container.style.borderColor = '#667eea';
+        });
+        
+        container.addEventListener('drop', (e) => {
+            e.preventDefault();
+            container.style.borderColor = '#667eea';
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].name.endsWith('.json')) {
+                fileInput.files = files;
+                importClients();
+            }
+        });
+    </script>
+</body>
+</html>
