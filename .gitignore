@@ -11,6 +11,9 @@
 # production
 /build
 
+# Tauri / Rust
+/src-tauri/target
+
 # misc
 .DS_Store
 .env.local
