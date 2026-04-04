@@ -1,8 +1,13 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+test('renders Practice Manager after load', async () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  expect(screen.getByText(/Loading Practice Manager/i)).toBeInTheDocument();
+  await waitFor(
+    () => {
+      expect(screen.getByRole('heading', { name: /Practice Manager/i })).toBeInTheDocument();
+    },
+    { timeout: 8000 }
+  );
 });

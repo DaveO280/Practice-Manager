@@ -2,7 +2,9 @@
   "name": "practice-manager",
   "version": "0.1.0",
   "private": true,
+  "homepage": ".",
   "dependencies": {
+    "@tauri-apps/api": "^2.9.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
@@ -19,7 +21,15 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:icons": "node scripts/generate-tauri-icons.cjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
+    "pngjs": "^7.0.0"
   },
   "eslintConfig": {
     "extends": [

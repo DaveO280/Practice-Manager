@@ -4,18 +4,9 @@ import { Camera, Users, Calendar, Download, Plus, X, Check, Sparkles, Clock, Dol
 
 // Import HEIC converter
 import heic2any from 'heic2any';
-
-// Load Tesseract from CDN
-let Tesseract = null;
-if (typeof window !== 'undefined') {
-  const script = document.createElement('script');
-  script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-  script.onload = () => {
-    Tesseract = window.Tesseract;
-    console.log('Tesseract loaded successfully');
-  };
-  document.head.appendChild(script);
-}
+import { getVeniceFinalScheduleText } from './utils/veniceOutput';
+import { saveJsonToDevice, saveCsvToDevice, saveBlobToDevice, supportsSaveFilePicker } from './utils/saveToDevice';
+import { getDataStore } from './dataStore';
 
 // Utility: Fuzzy string matching
 const fuzzyMatch = (str1, str2) => {
@@ -88,50 +79,66 @@ const isWithinWeeks = (dateStr, weeks) => {
   return diffWeeks <= weeks;
 };
 
-// IndexedDB wrapper
-const DB_NAME = 'PracticeManagerDB';
-const DB_VERSION = 1;
-
-const openDB = () => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      
-      if (!db.objectStoreNames.contains('clients')) {
-        const clientStore = db.createObjectStore('clients', { keyPath: 'id' });
-        clientStore.createIndex('name', 'name', { unique: false });
-        clientStore.createIndex('active', 'active', { unique: false });
-      }
-      
-      if (!db.objectStoreNames.contains('sessions')) {
-        const sessionStore = db.createObjectStore('sessions', { keyPath: 'id' });
-        sessionStore.createIndex('clientId', 'clientId', { unique: false });
-        sessionStore.createIndex('date', 'date', { unique: false });
-        sessionStore.createIndex('paid', 'paid', { unique: false });
-      }
-      
-      if (!db.objectStoreNames.contains('cptCodes')) {
-        db.createObjectStore('cptCodes', { keyPath: 'code' });
-      }
-    };
-  });
+/** RFC-style CSV field: quote if needed, escape internal quotes */
+const formatCsvBulkField = (val) => {
+  const s = val == null ? '' : String(val);
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
 };
 
-const dbOperation = async (storeName, mode, operation) => {
-  const db = await openDB();
-  const tx = db.transaction(storeName, mode);
-  const store = tx.objectStore(storeName);
-  const result = await operation(store);
-  await new Promise((resolve, reject) => {
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
+/** Split one CSV line into cells (handles "quoted, commas" correctly) */
+const parseCsvBulkLine = (line) => {
+  const result = [];
+  let i = 0;
+  let cur = '';
+  let inQuotes = false;
+  while (i < line.length) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i++;
+        continue;
+      }
+      cur += c;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      inQuotes = true;
+      i++;
+      continue;
+    }
+    if (c === ',') {
+      result.push(cur.trim());
+      cur = '';
+      i++;
+      continue;
+    }
+    cur += c;
+    i++;
+  }
+  result.push(cur.trim());
   return result;
+};
+
+const PROVIDER_INFO_DEFAULTS = {
+  providerName: '',
+  company: '',
+  email: '',
+  phone: '',
+  fax: '',
+  address: '',
+  npi: '',
+  taxId: '',
+  signatureImage: ''
 };
 
 // CPT Codes
@@ -146,6 +153,7 @@ const DEFAULT_CPT_CODES = [
 ];
 
 const PracticeManager = () => {
+  const store = getDataStore();
   const [currentView, setCurrentView] = useState('sessions'); // sessions, import, clients, export, invoicing
   const [clients, setClients] = useState([]);
   const [sessions, setSessions] = useState([]);
@@ -154,7 +162,10 @@ const PracticeManager = () => {
   const [autoImportEnabled, setAutoImportEnabled] = useState(() => {
     return localStorage.getItem('autoImportEnabled') === 'true';
   });
-  
+  const [showMonthlyExportReminder, setShowMonthlyExportReminder] = useState(false);
+  const [providerInfo, setProviderInfo] = useState(PROVIDER_INFO_DEFAULTS);
+  const [appDataHydrated, setAppDataHydrated] = useState(false);
+
   // eslint-disable-next-line no-unused-vars -- reserved for future UI toggle
   const toggleAutoImport = () => {
     const newValue = !autoImportEnabled;
@@ -238,29 +249,9 @@ const PracticeManager = () => {
         return;
       }
       
-      let importedCount = 0;
-      for (const clientData of importData.clients) {
-        if (!clientData.name) continue;
-        
-        const clientToSave = {
-          id: clientData.id || `client-${Date.now()}-${Math.random()}`,
-          name: clientData.name,
-          fullName: clientData.fullName || null,
-          rate: clientData.rate || 0,
-          email: clientData.email || '',
-          billingType: clientData.billingType || 'direct',
-          active: clientData.active !== undefined ? clientData.active : true,
-          timePatterns: clientData.timePatterns || [],
-          sessionCount: clientData.sessionCount || 0,
-          lastSeen: clientData.lastSeen || null,
-          dateOfBirth: clientData.dateOfBirth || null,
-          diagnosis: clientData.diagnosis || ''
-        };
-        
-        await saveClient(clientToSave);
-        importedCount++;
-      }
-      
+      const importedCount = await store.importClientsFromParsed(importData);
+      const data = await store.loadAppData();
+      setClients(Array.isArray(data?.clients) ? data.clients : []);
       console.log(`Auto-imported ${importedCount} clients`);
     } catch (error) {
       console.error('Error importing clients:', error);
@@ -278,238 +269,153 @@ const PracticeManager = () => {
         return;
       }
       
-      let importedCount = 0;
-      for (const sessionData of importData.sessions) {
-        if (!sessionData.date || !sessionData.clientId) continue;
-        
-        const sessionToSave = {
-          id: sessionData.id || `session-${Date.now()}-${Math.random()}`,
-          clientId: sessionData.clientId,
-          date: sessionData.date,
-          time: sessionData.time || '',
-          dayOfWeek: sessionData.dayOfWeek !== undefined ? sessionData.dayOfWeek : new Date(sessionData.date).getDay(),
-          cptCode: sessionData.cptCode || '90834',
-          duration: sessionData.duration || 45,
-          amountCharged: sessionData.amountCharged || 0,
-          paid: sessionData.paid || false,
-          paidDate: sessionData.paidDate || null,
-          notes: sessionData.notes || ''
-        };
-        
-        await saveSession(sessionToSave);
-        importedCount++;
-      }
-      
+      const importedCount = await store.importSessionsFromParsed(importData);
+      const data = await store.loadAppData();
+      const clientList = Array.isArray(data?.clients) ? data.clients : [];
+      const sessionList = Array.isArray(data?.sessions) ? data.sessions : [];
+      setClients(clientList);
+      setSessions(
+        [...sessionList].sort((a, b) => new Date(b.date) - new Date(a.date))
+      );
       console.log(`Auto-imported ${importedCount} sessions`);
     } catch (error) {
       console.error('Error importing sessions:', error);
     }
   };
   
-  // Load data from IndexedDB
   useEffect(() => {
     const loadData = async () => {
       try {
-        // Load clients
-        const clientData = await dbOperation('clients', 'readonly', (store) => {
-          return new Promise((resolve) => {
-            const request = store.getAll();
-            request.onsuccess = () => resolve(request.result);
-          });
-        });
-        setClients(clientData);
-        
-        // Load sessions
-        const sessionData = await dbOperation('sessions', 'readonly', (store) => {
-          return new Promise((resolve) => {
-            const request = store.getAll();
-            request.onsuccess = () => resolve(request.result);
-          });
-        });
-        setSessions(sessionData.sort((a, b) => new Date(b.date) - new Date(a.date)));
-        
-        // Load CPT codes (or use defaults); merge in any new default codes so they always appear
-        const cptData = await dbOperation('cptCodes', 'readonly', (store) => {
-          return new Promise((resolve) => {
-            const request = store.getAll();
-            request.onsuccess = () => resolve(request.result);
-          });
-        });
-        
-        const existingCodes = new Set((cptData || []).map(c => c.code));
-        const merged = [...(cptData || [])];
-        for (const code of DEFAULT_CPT_CODES) {
-          if (!existingCodes.has(code.code)) {
-            merged.push(code);
-            existingCodes.add(code.code);
-            await dbOperation('cptCodes', 'readwrite', (store) => {
-              return new Promise((resolve) => {
-                const request = store.add(code);
-                request.onsuccess = () => resolve();
-              });
-            });
-          }
-        }
-        setCptCodes(merged.length ? merged : DEFAULT_CPT_CODES);
-        
+        const data = await store.loadAppData();
+        const clientList = Array.isArray(data?.clients) ? data.clients : [];
+        const sessionList = Array.isArray(data?.sessions) ? data.sessions : [];
+        setClients(clientList);
+        setSessions(
+          [...sessionList].sort((a, b) => new Date(b.date) - new Date(a.date))
+        );
+        const merged = await store.mergeDefaultCptCodes(DEFAULT_CPT_CODES);
+        const cptList = Array.isArray(merged) ? merged : DEFAULT_CPT_CODES;
+        setCptCodes(cptList.length ? cptList : DEFAULT_CPT_CODES);
+
+        const pi = await store.getProviderInfo();
+        setProviderInfo(
+          pi ? { ...PROVIDER_INFO_DEFAULTS, ...pi } : PROVIDER_INFO_DEFAULTS
+        );
+
         setLoading(false);
-        
-        // Auto-import backups if enabled
-        if (clientData.length === 0 || sessionData.length === 0) {
-          // Only auto-import if database is empty
+        setAppDataHydrated(true);
+
+        const lastBackup = localStorage.getItem('lastBackupExportDate');
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+        if (!lastBackup || Date.now() - new Date(lastBackup).getTime() > thirtyDaysMs) {
+          setShowMonthlyExportReminder(true);
+        }
+
+        if (clientList.length === 0 || sessionList.length === 0) {
           setTimeout(() => autoImportBackups(), 1000);
         }
       } catch (error) {
         console.error('Error loading data:', error);
         setLoading(false);
+        setAppDataHydrated(true);
       }
     };
-    
+
     loadData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  
+
+  useEffect(() => {
+    if (!appDataHydrated) return;
+    void Promise.resolve(store.setProviderInfo(providerInfo)).catch((e) =>
+      console.error(e)
+    );
+    localStorage.setItem('providerInfo', JSON.stringify(providerInfo));
+  }, [providerInfo, appDataHydrated, store]);
+
+  const exportFullBackup = async () => {
+    const dateStr = new Date().toISOString().split('T')[0];
+    const sessionsPayload = { version: '1.0', exportDate: new Date().toISOString(), sessions };
+    const clientsPayload = { version: '1.0', exportDate: new Date().toISOString(), clients };
+
+    const r1 = await saveJsonToDevice(sessionsPayload, `sessions_backup_${dateStr}.json`);
+    if (r1.aborted) return;
+
+    if (!supportsSaveFilePicker()) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+
+    const r2 = await saveJsonToDevice(clientsPayload, `clients_backup_${dateStr}.json`);
+    if (r2.aborted) return;
+
+    localStorage.setItem('lastBackupExportDate', new Date().toISOString());
+    setShowMonthlyExportReminder(false);
+    const picked =
+      r1.mode === 'picker' && r2.mode === 'picker'
+        ? ' Both files were saved where you chose.'
+        : ' If you did not see a save dialog, check your Downloads folder.';
+    alert(`Backup exported (sessions + clients JSON).${picked}`);
+  };
+
   const saveClient = async (client) => {
     try {
-      await dbOperation('clients', 'readwrite', (store) => {
-        return new Promise((resolve, reject) => {
-          const request = store.put(client);
-          request.onsuccess = () => resolve();
-          request.onerror = () => reject(request.error);
-        });
-      });
-      
-      const updatedClients = await dbOperation('clients', 'readonly', (store) => {
-        return new Promise((resolve, reject) => {
-          const request = store.getAll();
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-      });
-      setClients(updatedClients);
+      await store.saveClient(client);
+      const data = await store.loadAppData();
+      setClients(Array.isArray(data?.clients) ? data.clients : []);
     } catch (error) {
       console.error('Error in saveClient:', error);
       throw error;
     }
   };
-  
+
   const saveSession = async (session) => {
     try {
-      console.log('Saving session:', session);
-      
-      // Update client patterns (skip when no time specified)
-      const client = clients.find(c => c.id === session.clientId);
-      if (client && session.time && session.time !== '—') {
-        const dayOfWeek = parseLocalDate(session.date).getDay();
-        
-        if (!client.timePatterns) client.timePatterns = [];
-        
-        let pattern = client.timePatterns.find(p => 
-          p.dayOfWeek === dayOfWeek && isWithinHour(p.time, session.time)
-        );
-        
-        if (pattern) {
-          pattern.frequency++;
-          pattern.lastOccurrence = session.date;
-        } else {
-          client.timePatterns.push({
-            dayOfWeek,
-            time: session.time,
-            frequency: 1,
-            lastOccurrence: session.date
-          });
-        }
-        
-        client.lastSeen = session.date;
-        client.sessionCount = (client.sessionCount || 0) + 1;
-        
-        console.log('Updated client:', client);
-        await saveClient(client);
-      }
-      
-      // Save session
-      await dbOperation('sessions', 'readwrite', (store) => {
-        return new Promise((resolve, reject) => {
-          const request = store.put(session);
-          request.onsuccess = () => {
-            console.log('Session saved to DB successfully');
-            resolve();
-          };
-          request.onerror = () => {
-            console.error('Error saving session to DB:', request.error);
-            reject(request.error);
-          };
-        });
-      });
-      
-      // Reload sessions
-      const updatedSessions = await dbOperation('sessions', 'readonly', (store) => {
-        return new Promise((resolve, reject) => {
-          const request = store.getAll();
-          request.onsuccess = () => {
-            console.log('Loaded sessions from DB:', request.result);
-            resolve(request.result);
-          };
-          request.onerror = () => reject(request.error);
-        });
-      });
-      
-      console.log('Setting sessions state with:', updatedSessions);
-      setSessions(updatedSessions.sort((a, b) => new Date(b.date) - new Date(a.date)));
+      await store.saveSession(session);
+      const data = await store.loadAppData();
+      const clientList = Array.isArray(data?.clients) ? data.clients : [];
+      const sessionList = Array.isArray(data?.sessions) ? data.sessions : [];
+      setClients(clientList);
+      setSessions(
+        [...sessionList].sort((a, b) => new Date(b.date) - new Date(a.date))
+      );
     } catch (error) {
       console.error('Error in saveSession:', error);
       throw error;
     }
   };
-  
+
   const deleteSession = async (sessionId) => {
     try {
-      await dbOperation('sessions', 'readwrite', (store) => {
-        return new Promise((resolve, reject) => {
-          const request = store.delete(sessionId);
-          request.onsuccess = () => resolve();
-          request.onerror = () => reject(request.error);
-        });
-      });
-      
-      const updatedSessions = await dbOperation('sessions', 'readonly', (store) => {
-        return new Promise((resolve, reject) => {
-          const request = store.getAll();
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-      });
-      setSessions(updatedSessions.sort((a, b) => new Date(b.date) - new Date(a.date)));
+      await store.deleteSession(sessionId);
+      const data = await store.loadAppData();
+      const sessionList = Array.isArray(data?.sessions) ? data.sessions : [];
+      setSessions(
+        [...sessionList].sort((a, b) => new Date(b.date) - new Date(a.date))
+      );
     } catch (error) {
       console.error('Error in deleteSession:', error);
       throw error;
     }
   };
-  
+
   const clearAllSessions = async () => {
     if (sessions.length === 0) {
       alert('No sessions to delete.');
       return;
     }
-    
-    const confirmMessage = `Are you sure you want to delete ALL ${sessions.length} session(s)?\n\nThis action cannot be undone.\n\nType "DELETE ALL" to confirm:`;
+
+    const sessionCount = sessions.length;
+    const confirmMessage = `Are you sure you want to delete ALL ${sessionCount} session(s)?\n\nThis action cannot be undone.\n\nType "DELETE ALL" to confirm:`;
     const userInput = prompt(confirmMessage);
-    
+
     if (userInput !== 'DELETE ALL') {
       return;
     }
-    
+
     try {
-      await dbOperation('sessions', 'readwrite', (store) => {
-        return new Promise((resolve, reject) => {
-          const request = store.clear();
-          request.onsuccess = () => resolve();
-          request.onerror = () => reject(request.error);
-        });
-      });
-      
+      await store.clearAllSessions();
       setSessions([]);
-      alert(`All ${sessions.length} session(s) have been deleted.`);
+      alert(`All ${sessionCount} session(s) have been deleted.`);
     } catch (error) {
       console.error('Error clearing all sessions:', error);
       alert('Error deleting sessions. Please try again.');
@@ -625,6 +531,59 @@ const PracticeManager = () => {
         </div>
       </div>
       
+      {/* Monthly backup reminder */}
+      {showMonthlyExportReminder && !loading && (
+        <div style={{
+          background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+          borderBottom: '2px solid #f59e0b',
+          padding: '0.75rem 2rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '0.75rem'
+        }}>
+          <span style={{ color: '#92400e', fontWeight: 600, fontFamily: '"Crimson Pro", Georgia, serif' }}>
+            📦 It’s been over 30 days since your last backup. Export now to keep your data safe. (Chrome/Edge: you can pick the folder; Safari/Firefox: files go to Downloads.)
+          </span>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              onClick={exportFullBackup}
+              style={{
+                padding: '0.5rem 1rem',
+                background: '#f59e0b',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: '"Crimson Pro", Georgia, serif'
+              }}
+            >
+              Export backup now
+            </button>
+            <button
+              onClick={() => {
+                localStorage.setItem('lastBackupExportDate', new Date().toISOString());
+                setShowMonthlyExportReminder(false);
+              }}
+              style={{
+                padding: '0.5rem 1rem',
+                background: 'transparent',
+                color: '#92400e',
+                border: '2px solid #f59e0b',
+                borderRadius: '8px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: '"Crimson Pro", Georgia, serif'
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+      
       {/* Navigation */}
       <div style={{ background: 'rgba(255, 255, 255, 0.9)', borderBottom: '1px solid rgba(102, 126, 234, 0.2)' }}>
         <div style={{ maxWidth: '1400px', margin: '0 auto', display: 'flex', gap: '0.5rem', padding: '1rem 2rem' }}>
@@ -668,7 +627,15 @@ const PracticeManager = () => {
         {currentView === 'import' && <ImportView clients={clients} sessions={sessions} cptCodes={cptCodes} saveSession={saveSession} saveClient={saveClient} />}
         {currentView === 'clients' && <ClientsView clients={clients} saveClient={saveClient} />}
         {currentView === 'export' && <ExportView sessions={sessions} clients={clients} />}
-        {currentView === 'invoicing' && <InvoicingView sessions={sessions} clients={clients} saveSession={saveSession} />}
+        {currentView === 'invoicing' && (
+          <InvoicingView
+            sessions={sessions}
+            clients={clients}
+            saveSession={saveSession}
+            providerInfo={providerInfo}
+            setProviderInfo={setProviderInfo}
+          />
+        )}
       </div>
     </div>
   );
@@ -805,31 +772,20 @@ const SessionsView = ({ sessions, clients, saveSession, deleteSession, setSessio
   const grouped = groupByDate(filteredSessions);
   const dates = Object.keys(grouped).sort((a, b) => new Date(b) - new Date(a));
   
-  const exportSessions = () => {
-    // Export all sessions as JSON
+  const exportSessions = async () => {
     const exportData = {
       version: '1.0',
       exportDate: new Date().toISOString(),
       sessions: sessions
     };
-    
-    const jsonString = JSON.stringify(exportData, null, 2);
-    const blob = new Blob([jsonString], { type: 'application/json' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
     const filename = `sessions_backup_${new Date().toISOString().split('T')[0]}.json`;
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    alert(`Exported ${sessions.length} session(s) to ${filename}`);
+    const r = await saveJsonToDevice(exportData, filename);
+    if (r.aborted) return;
+    localStorage.setItem('lastBackupExportDate', new Date().toISOString());
+    const where = r.mode === 'picker' ? 'to the folder you chose' : 'check your Downloads folder';
+    alert(`Saved ${sessions.length} session(s) as ${filename} (${where}).`);
   };
-  
+
   const handleImportSessions = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -951,7 +907,7 @@ const SessionsView = ({ sessions, clients, saveSession, deleteSession, setSessio
               fontWeight: 600,
               fontFamily: '"Crimson Pro", Georgia, serif'
             }}
-            title="Download sessions backup"
+            title="Save sessions backup to your computer (pick folder in Chrome/Edge)"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -1629,25 +1585,142 @@ const SessionsView = ({ sessions, clients, saveSession, deleteSession, setSessio
 };
 
 // Import View Component
+const VENICE_SCHEDULE_PROMPT = `Can you pull the names and times from this handwritten schedule?
+
+Output only schedule lines:
+- Day header like: Monday, March 2
+- Appointment line like: 10:30 — Jen
+No explanation.`;
+
 const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) => {
   const [photoFile, setPhotoFile] = useState(null);
   const [extractedAppointments, setExtractedAppointments] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showTextInput, setShowTextInput] = useState(false);
   const [ocrText, setOcrText] = useState('');
+  const [lastVeniceOutput, setLastVeniceOutput] = useState('');
+  const [lastVeniceError, setLastVeniceError] = useState('');
   const fileInputRef = useRef(null);
-  // Default to Monday of current week for "Import week of" - helps when dates don't include month
-  const getDefaultWeekStart = () => {
-    const d = new Date();
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(d);
-    monday.setDate(diff);
-    const y = monday.getFullYear(), m = String(monday.getMonth() + 1).padStart(2, '0'), dd = String(monday.getDate()).padStart(2, '0');
-    return `${y}-${m}-${dd}`;
+
+  const fileToDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  const callVeniceOCR = async (imageFile) => {
+    const apiKey = process.env.REACT_APP_VENICE_API_KEY || '';
+    const model = (process.env.REACT_APP_VENICE_MODEL || 'qwen-2.5-vl').trim() || 'qwen-2.5-vl';
+    if (!apiKey.trim()) {
+      throw new Error('Venice API key not set. Add REACT_APP_VENICE_API_KEY to .env');
+    }
+    console.log('[Venice] Sending request, model:', model, 'image size:', imageFile.size);
+    const dataUrl = await fileToDataUrl(imageFile);
+    console.log('[Venice] Prepared image data URL length:', dataUrl ? dataUrl.length : 0);
+    const stripThinking = String(process.env.REACT_APP_VENICE_STRIP_THINKING || 'true').toLowerCase() !== 'false';
+    console.log('[Venice] Options:', { stripThinking });
+    let res;
+    try {
+      res = await fetch('https://api.venice.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: VENICE_SCHEDULE_PROMPT },
+                { type: 'image_url', image_url: { url: dataUrl } }
+              ]
+            }
+          ],
+          ...(stripThinking ? {
+            venice_parameters: {
+              strip_thinking_response: true
+            }
+          } : {})
+        })
+      });
+      console.log('[Venice] Response received:', res.status, res.statusText);
+    } catch (fetchErr) {
+      console.error('[Venice] Fetch error (network/CORS?):', fetchErr);
+      throw new Error(`Venice request failed: ${fetchErr.message}`);
+    }
+    const errText = await res.text();
+    console.log('[Venice] Raw response length:', errText.length, 'preview:', errText.slice(0, 800));
+    if (!res.ok) {
+      console.error('[Venice] API error', res.status, res.statusText, errText);
+      throw new Error(`Venice API ${res.status}: ${errText.slice(0, 300)}`);
+    }
+    let data;
+    try {
+      data = JSON.parse(errText);
+    } catch (e) {
+      console.error('[Venice] Invalid JSON response:', errText.slice(0, 500));
+      throw new Error('Venice returned non-JSON response');
+    }
+    // --- Robust text extraction: try every known Venice response shape ---
+    const extractText = (val) => {
+      if (typeof val === 'string') return val.trim();
+      if (Array.isArray(val)) {
+        return val
+          .map(p => {
+            if (!p) return '';
+            if (typeof p === 'string') return p;
+            return p.text ?? p.content ?? '';
+          })
+          .join('')
+          .trim();
+      }
+      return '';
+    };
+
+    let text = '';
+    const choice = data?.choices?.[0];
+    const finishReason = choice?.finish_reason;
+    const msg = choice?.message ?? choice?.delta;
+
+    // Priority 1: message.content (standard OpenAI-compatible path)
+    if (!text) text = extractText(msg?.content);
+    // Priority 2: message.reasoning_content (reasoning models with strip_thinking off)
+    if (!text) text = extractText(msg?.reasoning_content);
+    // Priority 3: message.text (some providers)
+    if (!text) text = extractText(msg?.text);
+    // Priority 4: choice-level text
+    if (!text) text = extractText(choice?.text);
+    // Priority 5: top-level fields
+    if (!text) text = extractText(data?.output);
+    if (!text) text = extractText(data?.response);
+    if (!text) text = extractText(data?.text);
+    if (!text) text = extractText(data?.content);
+
+    // Priority 6: scan ALL choices (some APIs return multiple)
+    if (!text && Array.isArray(data?.choices)) {
+      for (const c of data.choices) {
+        const m = c?.message ?? c?.delta;
+        text = extractText(m?.content) || extractText(m?.reasoning_content) || extractText(m?.text) || extractText(c?.text);
+        if (text) break;
+      }
+    }
+
+    if (!text) {
+      if (finishReason === 'length') {
+        console.error('[Venice] Model hit its token limit (finish_reason: "length") with no content produced.');
+      }
+      const fullDump = JSON.stringify(data).slice(0, 2000);
+      console.error('[Venice] Could not extract text from response. Full dump:', fullDump);
+      throw new Error('Unexpected Venice response format');
+    }
+    console.log('[Venice] Success, output length:', text.length, 'finish_reason:', finishReason, 'preview:', text.slice(0, 200));
+    return text.trim();
   };
-  const [importWeekStart, setImportWeekStart] = useState(() => getDefaultWeekStart());
-  
+
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -1662,971 +1735,215 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
     
     try {
       console.log('Starting image processing...');
-      console.log('File details:', {
-        name: file.name,
-        type: file.type,
-        size: file.size
-      });
-      
-      // Check if Tesseract is loaded
-      if (!Tesseract) {
-        console.error('Tesseract not loaded yet');
-        console.log('OCR engine is still loading. Please wait a moment and try again.');
+      console.log('File details:', { name: file.name, type: file.type, size: file.size });
+
+      const apiKey = (process.env.REACT_APP_VENICE_API_KEY || '').trim();
+      if (!apiKey) {
+        alert('Venice API key not configured. Add REACT_APP_VENICE_API_KEY to your .env file.');
         setIsProcessing(false);
         return;
       }
-      
-      console.log('Tesseract loaded, starting OCR...');
-      
-      // Check if file is HEIC and convert if needed
+
       const isHeic = file.name && /\.(heic|heif)$/i.test(file.name);
-      let fileToProcess = file;
-      
+      let fileForVenice = file;
       if (isHeic) {
-        console.log('Converting HEIC file to JPEG...');
-        try {
-          const convertedBlob = await heic2any({
-            blob: file,
-            toType: 'image/jpeg',
-            quality: 0.8
-          });
-          // heic2any returns an array, get the first blob
-          fileToProcess = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
-          console.log('HEIC conversion complete');
-        } catch (conversionError) {
-          console.error('HEIC conversion error:', conversionError);
-          throw new Error('Failed to convert HEIC file. Please try converting it to JPEG first.');
-        }
+        const convertedBlob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.8 });
+        fileForVenice = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
       }
-      
-      // Convert file to blob URL for Tesseract
-      const imageUrl = URL.createObjectURL(fileToProcess);
-      console.log('Created blob URL:', imageUrl);
-      
-      // Create worker with corePath to avoid Web Worker restrictions
-      const worker = await Tesseract.createWorker('eng', 1, {
-        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js',
-        logger: info => {
-          if (info.status === 'recognizing text') {
-            console.log(`OCR Progress: ${Math.round(info.progress * 100)}%`);
-          }
-        }
-      });
-      
-      console.log('Worker created, recognizing text from blob URL...');
-      
-      const result = await worker.recognize(imageUrl);
-      
-      console.log('OCR Complete. Raw text:', result.data.text);
-      console.log('Full OCR text for debugging:', result.data.text);
-      
-      // Clean up blob URL
-      URL.revokeObjectURL(imageUrl);
-      
-      await worker.terminate();
-      
-      // Parse the extracted text
-      const extractedText = result.data.text;
-      parseOCRText(extractedText, clients, sessions, { importWeekStart });
-    } catch (error) {
-      console.error('OCR Error:', error);
-      console.error('Error stack:', error.stack);
-      console.error('Error message:', error.message);
-      console.log('Error processing image. Falling back to mock data.');
-      
-      // Fall back to mock data on any error
-      const today = new Date().toISOString().split('T')[0];
-      
-      const mockData = [
-        {
-          id: Date.now() + Math.random(),
-          dayColumn: 0,
-          date: today,
-          startTime: '9:00 AM',
-          endTime: '9:45 AM',
-          duration: 45,
-          rawText: '',
-          suggestedClient: null,
-          suggestedCPT: '90834',
-          confidence: 0
-        },
-        {
-          id: Date.now() + Math.random() + 1,
-          dayColumn: 0,
-          date: today,
-          startTime: '2:00 PM',
-          endTime: '2:30 PM',
-          duration: 30,
-          rawText: '',
-          suggestedClient: null,
-          suggestedCPT: '90832',
-          confidence: 0
-        }
-      ];
-      
-      setExtractedAppointments(mockData);
+
+      const extractedText = await callVeniceOCR(fileForVenice);
+      const finalText = getVeniceFinalScheduleText(extractedText);
+      console.log('[Venice] Full output:', extractedText);
+      console.log('[Venice] Final-only output preview:', finalText.slice(0, 400));
+      setLastVeniceOutput(finalText);
+      setLastVeniceError('');
+      setOcrText(finalText);
+      parseOCRText(finalText, clients, sessions);
       setIsProcessing(false);
+    } catch (err) {
+      const errMsg = err?.message || String(err);
+      console.error('[Venice] Failed:', errMsg, err);
+      setLastVeniceError(errMsg);
+      setLastVeniceOutput('');
+      setIsProcessing(false);
+      alert(`Venice AI failed: ${errMsg}\n\nCheck the "Venice output / error" section below for details.`);
     }
   };
   
-  // Convert HTML table format to text format for parsing
-  const convertHTMLTableToText = (htmlText) => {
-    try {
-      // Check if it's HTML table format
-      if (!htmlText.includes('<table') && !htmlText.includes('<tr>') && !htmlText.includes('<td')) {
-        return htmlText; // Not HTML, return as-is
-      }
-      
-      console.log('Detected HTML table format, converting...');
-      
-      // Create a temporary DOM element to parse HTML
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlText, 'text/html');
-      const table = doc.querySelector('table');
-      
-      if (!table) {
-        console.log('No table found, returning original text');
-        return htmlText;
-      }
-      
-      const rows = Array.from(table.querySelectorAll('tr'));
-      if (rows.length === 0) {
-        return htmlText;
-      }
-      
-      // Extract header row (dates)
-      const headerRow = rows[0];
-      const dateHeaders = [];
-      headerRow.querySelectorAll('th, td').forEach((cell) => {
-        const text = cell.textContent.trim();
-        if (text) {
-          dateHeaders.push(text);
-        }
-      });
-      
-      console.log('Found date headers:', dateHeaders);
-      
-      // Build text representation row by row
-      const textLines = [];
-      
-      // Add date headers on first line (parser expects this)
-      textLines.push(dateHeaders.join(' | '));
-      
-      // Process each data row - preserve column index for correct date mapping
-      for (let rowIndex = 1; rowIndex < rows.length; rowIndex++) {
-        const row = rows[rowIndex];
-        const cells = Array.from(row.querySelectorAll('td, th'));
-        
-        if (cells.length === 0) continue;
-        
-        // Get text from first cell to determine row type
-        const firstCellText = cells[0].textContent.trim();
-        
-        // Minute markers without colon (AT-A-GLANCE format: "15", "30", "45" or "15 Ashton", "30 Senna")
-        // Must check before generic hour numbers - match when row starts with 15, 30, or 45
-        const minuteMarkerMatch = firstCellText.match(/^(15|30|45)(?:\s|$)/);
-        if (minuteMarkerMatch) {
-          const minutePart = ':' + minuteMarkerMatch[1];
-          for (let colIndex = 0; colIndex < Math.min(cells.length, dateHeaders.length); colIndex++) {
-            let cellText = cells[colIndex].textContent.trim();
-            // Skip empty cells or cells that only contain the minute marker (no client)
-            if (!cellText || /^(15|30|45)$/.test(cellText) || /^:(15|30|45)$/.test(cellText)) continue;
-            if (!cellText.startsWith(':')) {
-              cellText = minutePart + ' ' + cellText;
-            }
-            textLines.push(`${colIndex}|${cellText}`);
-          }
-          continue;
-        }
-        
-        // If it's an hour row (first cell is hour number), set lastHourNumber and output any cells with hour+name
-        if (/^\d{1,2}$/.test(firstCellText)) {
-          textLines.push(firstCellText);
-          const hourVal = firstCellText;
-          for (let colIndex = 0; colIndex < Math.min(cells.length, dateHeaders.length); colIndex++) {
-            const cellText = cells[colIndex].textContent.trim();
-            if (!cellText || cellText === hourVal) continue;
-            textLines.push(`${colIndex}|${cellText}`);
-          }
-          continue;
-        }
-        
-        // If it's a minute marker with colon (":15", ":30", ":45"), output each cell with column index
-        // Combine minute marker with cell content so "DeWitt" in :30 row becomes ":30 DeWitt"
-        if (firstCellText.match(/^:\d{2}/)) {
-          const minutePart = firstCellText.match(/^:\d{2}/)[0];
-          for (let colIndex = 0; colIndex < Math.min(cells.length, dateHeaders.length); colIndex++) {
-            let cellText = cells[colIndex].textContent.trim();
-            // Skip empty cells or cells that only contain the minute marker (no client)
-            if (!cellText || /^(15|30|45)$/.test(cellText) || /^:(15|30|45)$/.test(cellText)) continue;
-            // If cell has more than just the minute (e.g. "DeWitt"), prepend minute for parsing
-            if (!cellText.startsWith(':')) {
-              cellText = minutePart + ' ' + cellText;
-            }
-            textLines.push(`${colIndex}|${cellText}`);
-          }
-          continue;
-        }
-        
-        // For other rows, output each cell with column index for correct date mapping
-        for (let colIndex = 0; colIndex < cells.length; colIndex++) {
-          const cellText = cells[colIndex].textContent.trim();
-          if (cellText && cellText.length > 0) {
-            textLines.push(`${colIndex}|${cellText}`);
-          }
-        }
-      }
-      
-      const convertedText = textLines.join('\n');
-      console.log('Converted HTML table to text format (first 1000 chars):', convertedText.substring(0, 1000));
-      return convertedText;
-      
-    } catch (error) {
-      console.error('Error converting HTML table:', error);
-      return htmlText; // Return original on error
-    }
-  };
-  
-  const parseOCRText = (extractedText, clients, sessions, options = {}) => {
+  const parseOCRText = (extractedText, clients, sessions) => {
     try {
       setIsProcessing(true);
-      const { importWeekStart } = options;
       
-      // Convert HTML table format to text if needed
-      const processedText = convertHTMLTableToText(extractedText);
+      const lines = extractedText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
       
-      const lines = processedText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-      
-      console.log('=== PARSING OCR TEXT ===');
+      console.log('=== PARSING SCHEDULE TEXT ===');
       console.log('Total lines:', lines.length);
-      console.log('First 50 lines:', lines.slice(0, 50));
+      console.log('Lines:', lines);
       
-      // Strategy: Parse dates, times, and client names from the OCR output
+      // Venice date format: "Monday, March 2" on its own line
+      const veniceDateLineRegex = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})\s*\.?\s*$/i;
+      const fullMonthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+      const year = new Date().getFullYear();
       
-      // 1. Extract all dates from headers (MON, NOV 17 | TUE, NOV 18 | WED, NOV 19)
-      // Make regex more strict - must have day of week, month abbreviation, and day number
-      // Pattern: MON, NOV 17 or TUE, NOV 18 (not fractions like 321/44)
-      // Also match "MON, NOV 17" at the start of a line or after whitespace (pattern used via globalDateRegex below)
-      const monthMap = {
-        'JAN': 0, 'FEB': 1, 'MAR': 2, 'APR': 3, 'MAY': 4, 'JUN': 5,
-        'JUL': 6, 'AUG': 7, 'SEP': 8, 'OCT': 9, 'NOV': 10, 'DEC': 11
-      };
-      
+      // Detect all dates
       const detectedDates = [];
-      const dateLineMap = {}; // Map date strings to line indices
-      
-      // Use import week start for month/year when provided (e.g. "2025-02-16" for Feb 16 week)
-      let refDate = importWeekStart ? new Date(importWeekStart + 'T12:00:00') : new Date();
-      let year = refDate.getFullYear();
-      let month = refDate.getMonth();
-      
-      // Parse month from "19 - 22 February" or "February" in text (AT-A-GLANCE header)
-      const monthNameMatch = processedText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/i);
-      if (monthNameMatch) {
-        const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
-        const mi = monthNames.indexOf(monthNameMatch[1].toLowerCase());
-        if (mi >= 0) {
-          month = mi;
-          console.log('Parsed month from text:', monthNameMatch[1], '→', month + 1);
-        }
-      }
-      const atAGlanceRegex = /^(\d{1,2})\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:\s|$)/i;
-      
-      const dayNameRegex = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$/i;
-      // First pass: Check for AT-A-GLANCE table format
-      const firstLine = lines[0] || '';
-      if (firstLine.includes(' | ')) {
-        const segments = firstLine.split(' | ').map(s => s.trim());
-        for (let c = 0; c < segments.length; c++) {
-          // Format A: "16 Monday" in one cell
-          const m = segments[c].match(atAGlanceRegex);
-          if (m) {
-            const day = parseInt(m[1]);
-            if (day >= 1 && day <= 31) {
-              const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              if (!detectedDates.includes(dateStr)) {
-                detectedDates.push(dateStr);
-                console.log('Found AT-A-GLANCE date:', m[0], '→', dateStr, '(column', c + ')');
-              }
-            }
-            continue;
-          }
-          // Format B: "16" and "Monday" in separate columns - pair adjacent number + day name
-          const dayNum = parseInt(segments[c]);
-          if (c + 1 < segments.length && dayNum >= 1 && dayNum <= 31 && dayNameRegex.test(segments[c + 1])) {
-            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+      for (const line of lines) {
+        const m = line.match(veniceDateLineRegex);
+        if (m) {
+          const day = parseInt(m[3], 10);
+          const monthIdx = fullMonthNames.indexOf(m[2].toLowerCase());
+          if (day >= 1 && day <= 31 && monthIdx >= 0) {
+            const dateStr = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             if (!detectedDates.includes(dateStr)) {
               detectedDates.push(dateStr);
-              console.log('Found AT-A-GLANCE date (paired):', dayNum, segments[c + 1], '→', dateStr);
+              console.log('Found date:', m[0], '→', dateStr);
             }
           }
         }
       }
       
-      // First pass b: Check for vertical/day-by-day format ("16 Monday", "Monday 16", or standalone "21", "22")
       if (detectedDates.length === 0) {
-        for (let i = 0; i < lines.length; i++) {
-          const trimmed = lines[i].trim();
-          // "16 Monday" or "16 Monday 47/318" (number first, allow trailing text)
-          let m = trimmed.match(/^(\d{1,2})\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:\s|$)/i);
-          if (!m) {
-            // "Monday 16" or "Monday 16 47/318" (day name first, allow trailing)
-            m = trimmed.match(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+(\d{1,2})(?:\s|$)/i);
-            if (m) m = [m[0], m[2], m[1]]; // normalize to [full, day, dayName]
-          }
-          if (m) {
-            const day = parseInt(m[1]);
-            if (day >= 1 && day <= 31) {
-              const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              if (!detectedDates.includes(dateStr)) {
-                detectedDates.push(dateStr);
-                console.log('Found vertical date:', m[0], '→', dateStr);
-              }
-            }
-          }
-          // Standalone day number (16-31) as date header - e.g. "21" for Saturday
-          const m2 = trimmed.match(/^(1[6-9]|2[0-9]|30|31)$/);
-          if (m2) {
-            const day = parseInt(m2[1]);
-            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            if (!detectedDates.includes(dateStr)) {
-              detectedDates.push(dateStr);
-              console.log('Found standalone date:', m2[0], '→', dateStr);
-            }
-          }
-        }
+        const fallback = new Date().toISOString().split('T')[0];
+        console.log('No dates found, using today:', fallback);
+        detectedDates.push(fallback);
       }
       
-      // Second pass: find dates in MON, NOV 17 format if AT-A-GLANCE didn't find any
-      const allText = lines.join('\n');
-      const globalDateRegex = /(?:^|\s)(MON|TUE|WED|THU|FRI|SAT|SUN)[,\s]+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[,\s]+(\d{1,2})(?:\s|$)/gim;
-      let dateMatch;
-      
-      // Reset regex - only run MON,NOV 17 pass if AT-A-GLANCE didn't find dates
-      if (detectedDates.length === 0) {
-        globalDateRegex.lastIndex = 0;
-        while ((dateMatch = globalDateRegex.exec(allText)) !== null) {
-        const monthStr = dateMatch[2].toUpperCase();
-        const day = parseInt(dateMatch[3]);
-        
-        // Validate: day must be 1-31, and we must have a valid month
-        if (day >= 1 && day <= 31) {
-          const monthKey = monthStr.substring(0, 3);
-          const monthIndex = monthMap[monthKey];
-          
-          if (monthIndex !== undefined) {
-            const year = new Date().getFullYear();
-            // Format date directly as YYYY-MM-DD to avoid timezone conversion
-            const dateStr = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            
-            // Only add if not already in the list
-            if (!detectedDates.includes(dateStr)) {
-              detectedDates.push(dateStr);
-              // Find which line this date is on
-              const lineIndex = allText.substring(0, dateMatch.index).split('\n').length - 1;
-              dateLineMap[dateStr] = lineIndex;
-              console.log('Found date:', dateMatch[0], '→', dateStr, 'at line', lineIndex, 'full text at that position:', lines[lineIndex]);
-            }
-          }
-        }
-        }
-      }
-      
-      // Loose scan: find "N Monday" style dates anywhere in text (always run to catch any missed)
-      const looseDateRegex = /(\d{1,2})\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)/gi;
-      let looseMatch;
-      while ((looseMatch = looseDateRegex.exec(allText)) !== null) {
-        const day = parseInt(looseMatch[1]);
-        if (day >= 1 && day <= 31) {
-          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          if (!detectedDates.includes(dateStr)) {
-            detectedDates.push(dateStr);
-            console.log('Found loose date:', looseMatch[0], '→', dateStr);
-          }
-        }
-      }
-      
-      if (detectedDates.length === 0) {
-        const fallbackDate = importWeekStart || new Date().toISOString().split('T')[0];
-        console.log('No dates found in header, using', importWeekStart ? 'import week start' : 'today', ':', fallbackDate);
-        detectedDates.push(fallbackDate);
-      }
-      
-      console.log('Detected dates:', detectedDates);
-      
-      if (detectedDates.length === 0) {
-        console.warn('WARNING: No dates found! Check the date format in your OCR text.');
-        console.log('Looking for patterns like: MON, NOV 17 or TUE, NOV 18');
-      }
-      
-      // 2. Parse appointments: Look for patterns like "10:30 Jen", "12 Ashton", "1 Joanne 6/6", etc.
-      const appointments = [];
-      // Sort dates to ensure chronological order
       const sortedDates = [...detectedDates].sort();
       
-      // Detect format: Check if dates appear at the top (before first appointment) or scattered throughout
-      // If all dates are in the first 30% of lines, likely "grouped by hour" format
-      // Otherwise, dates are interspersed with appointments (organized by day format)
-      let lastDateLine = -1;
-      const datePattern = /(?:^|\s)(MON|TUE|WED|THU|FRI|SAT|SUN)[,\s]+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[,\s]+(\d{1,2})(?:\s|$)/i;
-      const verticalDatePattern = /^(\d{1,2})\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:\s|$)/i;
-      const verticalDatePatternReverse = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+(\d{1,2})(?:\s|$)/i;
-      const standaloneDayPattern = /^(1[6-9]|2[0-9]|30|31)$/;
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].match(datePattern) || lines[i].match(verticalDatePattern) || lines[i].match(verticalDatePatternReverse) || lines[i].trim().match(standaloneDayPattern)) {
-          lastDateLine = Math.max(lastDateLine, i);
-        }
-      }
+      // Skip reasoning/narrative lines from AI output
+      const isReasoningLine = (s) => {
+        const t = (s || '').trim();
+        if (t.length > 120) return true;
+        if (/^(the user|let me|looking at|actually|wait[,:]|i can see|i need to|so we|but the|i think|i'll|columns?|row |slot |label|extracted|create client)/i.test(t)) return true;
+        return false;
+      };
+      const isReasoningName = (name) => {
+        if (!name || typeof name !== 'string') return true;
+        const t = name.trim();
+        if (t.length > 35) return true;
+        if (/^(the user|let me|looking at|actually|wait|but the|so we|i can|i need|columns?|row |am slot|pm slot|create client|extracted|empty|unclear)/i.test(t)) return true;
+        if ((t.split(/\s+/).length > 6) && /[a-z]{4,}/.test(t)) return true;
+        return false;
+      };
       
-      const totalLines = lines.length;
-      const dateBlockRatio = (lastDateLine + 1) / totalLines;
-      // Vertical format ("16 Monday", "17 Tuesday") always uses date-tracking
-      const hasVerticalDates = detectedDates.length > 0 && allText.match(/\d{1,2}\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)/i);
-      const isGroupedByHour = !hasVerticalDates && dateBlockRatio < 0.3 && detectedDates.length > 1;
-      
-      console.log(`Format detection: Last date at line ${lastDateLine + 1} of ${totalLines} (${(dateBlockRatio * 100).toFixed(1)}%)`);
-      console.log(`Using ${isGroupedByHour ? 'ROTATION' : 'DATE-TRACKING'} method${hasVerticalDates ? ' (vertical format detected)' : ''}`);
-      
-      // Patterns to match: "10:30 Jen", "12 Ashton", "5:00 Ari pd" (matched inline via timeNameMatch, hourNameMatch, etc.)
-      const hourOnlyPattern = /^(\d{1,2})$/;
-      
-      // Skip words that aren't client names
-      const skipWords = /^(MON|TUE|WED|THU|FRI|SAT|SUN|NOV|DEC|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|Revolution|Day|Mexico|Team|WEEK|OCT|NOVEMBER|Veterans|Remembrance|Canada)$/i;
-      // Skip lines that are date range headers (e.g. "19 - 22 February")
-      const dateRangeHeaderPattern = /^\d{1,2}\s*-\s*\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)/i;
-      
-      // Initialize tracking variables for both methods
+      // Parse appointments line by line, tracking current date from day headers
+      const appointments = [];
+      let currentDate = sortedDates[0];
       let currentDateIndex = 0;
-      let currentDate = sortedDates[0] || new Date().toISOString().split('T')[0];
-      currentDateIndex = sortedDates.indexOf(currentDate);
-      
-      // For rotation method: track hour groups
-      let currentHour = null;
-      let hourAppointmentIndex = 0;
-      
-      // Track the last hour number seen (for minute marker patterns like ":30 Jen")
-      let lastHourNumber = null;
       
       for (let i = 0; i < lines.length; i++) {
-        let line = lines[i];
-        // Parse column-prefixed format from HTML table (e.g. "2|8 DeWitt" = column 2)
-        let lineColIdx = null;
-        const colPrefixMatch = line.match(/^(\d+)\|(.+)$/);
-        if (colPrefixMatch) {
-          lineColIdx = parseInt(colPrefixMatch[1]);
-          line = colPrefixMatch[2];
-        }
-        const lineContent = line;
+        const line = lines[i];
         
-        // Skip date range headers like "19 - 22 February"
-        if (dateRangeHeaderPattern.test(lineContent)) continue;
+        if (isReasoningLine(line)) continue;
         
-        // Check if this line is a date header - update current date (for date-tracking method)
-        let verticalDateMatch = lineContent.match(verticalDatePattern);
-        if (!verticalDateMatch) {
-          const rev = lineContent.match(verticalDatePatternReverse);
-          if (rev) verticalDateMatch = [rev[0], rev[2], rev[1]]; // normalize to [full, day, dayName]
-        }
-        if (verticalDateMatch) {
-          const day = parseInt(verticalDateMatch[1]);
-          if (day >= 1 && day <= 31) {
-            const newDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            if (!detectedDates.includes(newDate)) {
-              detectedDates.push(newDate);
-              sortedDates.push(newDate);
-              sortedDates.sort();
-            }
-            if (!isGroupedByHour) {
-              const prevDate = currentDate;
-              currentDate = newDate;
-              currentDateIndex = sortedDates.indexOf(currentDate);
-              if (prevDate !== currentDate) {
-                console.log(`✓ Switched date: ${prevDate} → ${currentDate} (vertical format) at line ${i + 1}`);
-              }
-            }
-            lastHourNumber = null;
-          }
-          continue;
-        }
-        // Standalone day number as date header (e.g. "21" for Saturday) - only for plain text format (no column prefix)
-        const standaloneDayMatch = lineContent.match(standaloneDayPattern);
-        if (standaloneDayMatch && detectedDates.length > 0 && lineColIdx === null) {
-          const day = parseInt(standaloneDayMatch[1]);
-          const newDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          if (!detectedDates.includes(newDate)) {
-            detectedDates.push(newDate);
-            sortedDates.push(newDate);
-            sortedDates.sort();
-          }
-          if (!isGroupedByHour) {
-            const prevDate = currentDate;
-            currentDate = newDate;
+        // Check for date header — switch current date
+        const veniceDateMatch = line.match(veniceDateLineRegex);
+        if (veniceDateMatch) {
+          const day = parseInt(veniceDateMatch[3], 10);
+          const monthIdx = fullMonthNames.indexOf(veniceDateMatch[2].toLowerCase());
+          if (day >= 1 && day <= 31 && monthIdx >= 0) {
+            currentDate = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             currentDateIndex = sortedDates.indexOf(currentDate);
-            if (prevDate !== currentDate) {
-              console.log(`✓ Switched date: ${prevDate} → ${currentDate} (standalone day) at line ${i + 1}`);
+            if (currentDateIndex < 0) {
+              sortedDates.push(currentDate);
+              sortedDates.sort();
+              currentDateIndex = sortedDates.indexOf(currentDate);
             }
+            console.log(`✓ Date: ${currentDate} at line ${i + 1}`);
           }
-          lastHourNumber = null;
-          continue;
-        }
-        const dateMatch = lineContent.match(datePattern);
-        if (dateMatch) {
-          const monthStr = dateMatch[2].toUpperCase();
-          const day = parseInt(dateMatch[3]);
-          
-          if (day >= 1 && day <= 31) {
-            const monthKey = monthStr.substring(0, 3);
-            const monthIndex = monthMap[monthKey];
-            
-            if (monthIndex !== undefined) {
-              const year = new Date().getFullYear();
-              // Format date directly as YYYY-MM-DD to avoid timezone conversion
-              const newDate = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              
-              if (detectedDates.includes(newDate)) {
-                // Only switch dates if using date-tracking method
-                if (!isGroupedByHour) {
-                  const prevDate = currentDate;
-                  currentDate = newDate;
-                  currentDateIndex = sortedDates.indexOf(currentDate);
-                  if (prevDate !== currentDate) {
-                    console.log(`✓ Switched date: ${prevDate} → ${currentDate} (index: ${currentDateIndex}) at line ${i + 1}`);
-                  }
-                }
-                // Reset hour tracking when we see a new date
-                lastHourNumber = null;
-              }
-            }
-          }
-          continue; // Skip date lines
-        }
-        
-        // Track hour numbers for minute marker patterns
-        // This must be checked FIRST before other patterns to ensure lastHourNumber is always up to date
-        const hourOnlyMatch = lineContent.match(/^(\d{1,2})$/);
-        if (hourOnlyMatch) {
-          const hour = parseInt(hourOnlyMatch[1]);
-          // Accept hours 7-12 (AM/noon) and 1-8 (PM) - these are valid schedule hours
-          if ((hour >= 7 && hour <= 12) || (hour >= 1 && hour <= 8)) {
-            lastHourNumber = hour;
-            console.log(`  → Updated lastHourNumber to ${hour} at line ${i + 1}`);
-            // Continue to check for other patterns (like hour + name on same line)
-          }
-        }
-        
-        // Skip lines that are just numbers (15, 30, 45 - minute markers without names)
-        if (/^(15|30|45)$/.test(lineContent.trim()) && !lastHourNumber) {
           continue;
         }
         
-        // Helper: use column index from table when available, else rotation/date-tracking
-        const resolveDateAndColumn = (assignedDate, assignedDateIndex, overrideColIdx) => {
-          const colIdx = overrideColIdx !== undefined && overrideColIdx !== null ? overrideColIdx : lineColIdx;
-          if (colIdx !== null && colIdx < sortedDates.length) {
-            return { date: sortedDates[colIdx], dayColumn: colIdx };
-          }
-          return { date: assignedDate, dayColumn: assignedDateIndex };
-        };
-        
-        // Pattern 0: ":15 Name", ":30 Name", ":45 Name" - minute marker with name on same line
-        // This pattern appears when hour is on previous line, then ":30 Jen" on current line
-        // Also handle ":30#Name" (no space) and ":30" on one line with name on next
-        const minuteNameMatch = lineContent.match(/^:(\d{2})(?:\s*#?\s*)(.+?)(?:\s+(pd|upd|\d+\/\d+|\$[\d.]+))?\s*$/i);
-        if (minuteNameMatch && lastHourNumber !== null) {
-          const minutes = parseInt(minuteNameMatch[1]);
-          let clientName = minuteNameMatch[2] ? minuteNameMatch[2].trim() : null;
-          
-          // Clean up name - remove any trailing notes and ensure it starts with a letter
-          if (clientName) {
-            // Remove leading minute marker if repeated (e.g. "15 Ashton" from ":15 15 Ashton")
-            clientName = clientName.replace(/^(15|30|45)\s+/, '');
-            // Remove notes at the end
-            clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+|\$[\d.]+)$/i, '').trim();
-            // Remove leading # or other special chars
-            clientName = clientName.replace(/^[#\s]+/, '').trim();
-            // Extract only the name part (letters, spaces, & for compound names like "Neal & Bienee")
-            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s&+]+)/);
-            if (nameMatch) {
-              clientName = nameMatch[1].trim();
-            }
-          }
-          
-          // Convert hour to 24-hour format
-          // In schedule: 7-11 = AM, 12 = noon, 1-6 = PM, 7-8 = PM (evening)
-          // But since we see 7-12 first, then 1-8, we can infer:
-          // Hours 7-11: AM (7-11)
-          // Hour 12: noon (12)
-          // Hours 1-6: PM (13-18)
-          // Hours 7-8 (after 12): PM (19-20)
-          let hour24;
-          if (lastHourNumber >= 7 && lastHourNumber <= 11) {
-            hour24 = lastHourNumber; // 7-11 AM
-          } else if (lastHourNumber === 12) {
-            hour24 = 12; // noon
-          } else if (lastHourNumber >= 1 && lastHourNumber <= 6) {
-            hour24 = lastHourNumber + 12; // 1-6 PM (13-18)
-          } else if (lastHourNumber >= 7 && lastHourNumber <= 8) {
-            // This is tricky - could be 7-8 AM or PM
-            // If we've seen hour 12 before, this is likely PM
-            hour24 = lastHourNumber + 12; // Assume PM (19-20)
-          } else {
-            hour24 = lastHourNumber;
-          }
-          
-          if (clientName && clientName.length > 1 && !skipWords.test(clientName) && hour24 >= 7 && hour24 <= 20) {
-            const displayHour = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-            const period = hour24 >= 12 ? 'PM' : 'AM';
-            const startTime = `${displayHour}:${minutes.toString().padStart(2, '0')} ${period}`;
-            
-            // Default to 45-minute sessions
-            const endMinutes = minutes + 45;
-            const endHour24Final = hour24 + Math.floor(endMinutes / 60);
-            const endMinutesFinal = endMinutes % 60;
-            const endDisplayHour = endHour24Final > 12 ? endHour24Final - 12 : (endHour24Final === 0 ? 12 : endHour24Final);
-            const endPeriod = endHour24Final >= 12 ? 'PM' : 'AM';
-            const endTime = `${endDisplayHour}:${endMinutesFinal.toString().padStart(2, '0')} ${endPeriod}`;
-            
-            // Assign date based on detected format
-            let assignedDate, assignedDateIndex;
-            if (isGroupedByHour) {
-              // Rotation method: rotate through dates within each hour group
-              if (currentHour !== hour24) {
-                currentHour = hour24;
-                hourAppointmentIndex = 0; // Reset for new hour
-              }
-              assignedDateIndex = hourAppointmentIndex % sortedDates.length;
-              assignedDate = sortedDates[assignedDateIndex];
-              hourAppointmentIndex++;
-            } else {
-              // Date-tracking method: use current date from date headers
-              assignedDate = currentDate;
-              assignedDateIndex = currentDateIndex;
-            }
-            
-            appointments.push({
-              id: Date.now() + Math.random() + appointments.length,
-              ...resolveDateAndColumn(assignedDate, assignedDateIndex),
-              startTime: startTime,
-              endTime: endTime,
-              duration: 45,
-              rawText: clientName,
-              suggestedClient: null,
-              suggestedCPT: '90834',
-              confidence: 0.85
-            });
-            console.log(`✓ Found: ${startTime} - ${clientName} on ${assignedDate} (from line: "${line}")`);
-            continue;
-          }
-        }
-        
-        // Pattern 0b: ":15" or ":30" or ":45" on one line, name on next line
-        const minuteOnlyMatch = lineContent.match(/^:(\d{2})$/);
-        if (minuteOnlyMatch && lastHourNumber !== null && i + 1 < lines.length) {
-          const minutes = parseInt(minuteOnlyMatch[1]);
-          let nextLine = lines[i + 1];
-          let nextLineColIdx = null;
-          const nextColPrefix = nextLine.match(/^(\d+)\|(.+)$/);
-          if (nextColPrefix) {
-            nextLineColIdx = parseInt(nextColPrefix[1]);
-            nextLine = nextColPrefix[2];
-          }
-          // Check if next line has a name (not just numbers, minute markers, or common words)
-          const namePattern = /^([A-Za-z][A-Za-z\s&+]+?)(?:\s+(pd|upd|\d+\/\d+|\$[\d.]+))?\s*$/i;
-          const nameMatch = nextLine.match(namePattern);
-          
-          if (nameMatch) {
-            let clientName = nameMatch[1].trim();
-            
-            // Clean up name
-            clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+|\$[\d.]+)$/i, '').trim();
-            clientName = clientName.replace(/^[#\s]+/, '').trim();
-            
-            // Skip if it looks like a date or common word
-            if (clientName && clientName.length > 1 && !skipWords.test(clientName)) {
-              // Convert hour to 24-hour format (same logic as Pattern 0)
-              let hour24;
-              if (lastHourNumber >= 7 && lastHourNumber <= 11) {
-                hour24 = lastHourNumber; // 7-11 AM
-              } else if (lastHourNumber === 12) {
-                hour24 = 12; // noon
-              } else if (lastHourNumber >= 1 && lastHourNumber <= 6) {
-                hour24 = lastHourNumber + 12; // 1-6 PM (13-18)
-              } else if (lastHourNumber >= 7 && lastHourNumber <= 8) {
-                hour24 = lastHourNumber + 12; // Assume PM (19-20)
-              } else {
-                hour24 = lastHourNumber;
-              }
-              
-              if (hour24 >= 7 && hour24 <= 20) {
-                const displayHour = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-                const period = hour24 >= 12 ? 'PM' : 'AM';
-                const startTime = `${displayHour}:${minutes.toString().padStart(2, '0')} ${period}`;
-                
-                // Default to 45-minute sessions
-                const endMinutes = minutes + 45;
-                const endHour24Final = hour24 + Math.floor(endMinutes / 60);
-                const endMinutesFinal = endMinutes % 60;
-                const endDisplayHour = endHour24Final > 12 ? endHour24Final - 12 : (endHour24Final === 0 ? 12 : endHour24Final);
-                const endPeriod = endHour24Final >= 12 ? 'PM' : 'AM';
-                const endTime = `${endDisplayHour}:${endMinutesFinal.toString().padStart(2, '0')} ${endPeriod}`;
-                
-                // Assign date based on detected format
-                let assignedDate, assignedDateIndex;
-                if (isGroupedByHour) {
-                  if (currentHour !== hour24) {
-                    currentHour = hour24;
-                    hourAppointmentIndex = 0;
-                  }
-                  assignedDateIndex = hourAppointmentIndex % sortedDates.length;
-                  assignedDate = sortedDates[assignedDateIndex];
-                  hourAppointmentIndex++;
-                } else {
-                  assignedDate = currentDate;
-                  assignedDateIndex = currentDateIndex;
-                }
-                
-                appointments.push({
-                  id: Date.now() + Math.random() + appointments.length,
-                  ...resolveDateAndColumn(assignedDate, assignedDateIndex, nextLineColIdx),
-                  startTime: startTime,
-                  endTime: endTime,
-                  duration: 45,
-                  rawText: clientName,
-                  suggestedClient: null,
-                  suggestedCPT: '90834',
-                  confidence: 0.8
-                });
-                console.log(`✓ Found: ${startTime} - ${clientName} on ${assignedDate} (from lines: "${lineContent}" + "${nextLine}")`);
-                i++; // Skip next line since we processed it
-                continue;
-              }
-            }
-          }
-        }
-        
-        // Pattern 1: "10:30 Jen" or "10:45 Emily" or "5:00 Ari pd" - time:minute name [notes]
-        // Capture everything after the time until end of line or notes pattern
-        const timeNameMatch = lineContent.match(/(\d{1,2}):(\d{2})\s+(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i);
+        // Pattern A: "10:30 — Jen" or "10:30 AM — Jen" or "4:50 — Annie"
+        const timeNameMatch = line.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?\s*(?:[—\-–]\s*)?(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i);
         if (timeNameMatch) {
           let hour = parseInt(timeNameMatch[1]);
           const minutes = parseInt(timeNameMatch[2]);
-          let clientName = timeNameMatch[3] ? timeNameMatch[3].trim() : null;
+          const ampm = timeNameMatch[3] ? timeNameMatch[3].toUpperCase() : null;
+          let clientName = timeNameMatch[4] ? timeNameMatch[4].trim() : null;
           
-          // Clean up name - remove any trailing notes and ensure it starts with a letter
           if (clientName) {
-            // Remove notes at the end
+            clientName = clientName.replace(/^[—\-–]\s*/, '').trim();
             clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+)$/i, '').trim();
-            // Extract only the name part (letters, spaces, + for compound names)
-            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s+]+)/);
-            if (nameMatch) {
-              clientName = nameMatch[1].trim();
-            }
+            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s&+'.]+)/);
+            if (nameMatch) clientName = nameMatch[1].trim();
           }
           
-          // Convert hour to 24-hour format (assume 1-7 is PM, 8-12 is AM)
-          const hour24 = hour >= 1 && hour <= 7 ? hour + 12 : hour;
+          let hour24;
+          if (ampm === 'PM' && hour !== 12) hour24 = hour + 12;
+          else if (ampm === 'AM' && hour === 12) hour24 = 0;
+          else if (ampm) hour24 = hour;
+          else hour24 = hour >= 1 && hour <= 7 ? hour + 12 : hour;
           
-          if (clientName && clientName.length > 1 && !skipWords.test(clientName) && hour24 >= 7 && hour24 <= 20) {
+          if (clientName && clientName.length > 1 && !isReasoningName(clientName) && hour24 >= 0 && hour24 <= 23) {
             const displayHour = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
             const period = hour24 >= 12 ? 'PM' : 'AM';
             const startTime = `${displayHour}:${minutes.toString().padStart(2, '0')} ${period}`;
             
-            // Default to 45-minute sessions
-            const endMinutes = minutes + 45;
-            const endHour24Final = hour24 + Math.floor(endMinutes / 60);
-            const endMinutesFinal = endMinutes % 60;
-            const endDisplayHour = endHour24Final > 12 ? endHour24Final - 12 : (endHour24Final === 0 ? 12 : endHour24Final);
-            const endPeriod = endHour24Final >= 12 ? 'PM' : 'AM';
-            const endTime = `${endDisplayHour}:${endMinutesFinal.toString().padStart(2, '0')} ${endPeriod}`;
-            
-            // Assign date based on detected format
-            let assignedDate, assignedDateIndex;
-            if (isGroupedByHour) {
-              // Rotation method: rotate through dates within each hour group
-              if (currentHour !== hour24) {
-                currentHour = hour24;
-                hourAppointmentIndex = 0; // Reset for new hour
-              }
-              assignedDateIndex = hourAppointmentIndex % sortedDates.length;
-              assignedDate = sortedDates[assignedDateIndex];
-              hourAppointmentIndex++;
-            } else {
-              // Date-tracking method: use current date from date headers
-              assignedDate = currentDate;
-              assignedDateIndex = currentDateIndex;
-            }
+            const endMinTotal = hour24 * 60 + minutes + 45;
+            const endH24 = Math.floor(endMinTotal / 60);
+            const endM = endMinTotal % 60;
+            const endDisplay = endH24 > 12 ? endH24 - 12 : (endH24 === 0 ? 12 : endH24);
+            const endTime = `${endDisplay}:${endM.toString().padStart(2, '0')} ${endH24 >= 12 ? 'PM' : 'AM'}`;
             
             appointments.push({
               id: Date.now() + Math.random() + appointments.length,
-              ...resolveDateAndColumn(assignedDate, assignedDateIndex),
-              startTime: startTime,
-              endTime: endTime,
-              duration: 45,
+              date: currentDate,
+              dayColumn: currentDateIndex,
+              startTime, endTime, duration: 45,
               rawText: clientName,
               suggestedClient: null,
               suggestedCPT: '90834',
               confidence: 0.9
             });
-            console.log(`✓ Found: ${startTime} - ${clientName} on ${assignedDate} (from line: "${line}")`);
+            console.log(`✓ ${startTime} - ${clientName} on ${currentDate}`);
             continue;
           }
         }
         
-        // Pattern 2: "12 Ashton" or "1 Joanne 6/6" or "10 Jemma pd" - hour name [notes]
-        // Capture everything after the hour until end of line or notes pattern
-        const hourNameMatch = lineContent.match(/^(\d{1,2})\s+(.+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i);
+        // Pattern B: "12 Ashton" or "1 — Tess" (hour without minutes)
+        const hourNameMatch = line.match(/^(\d{1,2})\s*(AM|PM)?\s*(?:[—\-–]\s*)?([A-Za-z].+?)(?:\s+(pd|upd|\d+\/\d+))?\s*$/i);
         if (hourNameMatch) {
           let hour = parseInt(hourNameMatch[1]);
-          let clientName = hourNameMatch[2] ? hourNameMatch[2].trim() : null;
+          const ampmH = hourNameMatch[2] ? hourNameMatch[2].toUpperCase() : null;
+          let clientName = hourNameMatch[3] ? hourNameMatch[3].trim() : null;
           
-          // Clean up name - extract only the name part (letters, spaces, + for compound names)
           if (clientName) {
-            // Remove notes at the end
+            clientName = clientName.replace(/^[—\-–]\s*/, '').trim();
             clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+)$/i, '').trim();
-            // Extract only the name part
-            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s+]+)/);
-            if (nameMatch) {
-              clientName = nameMatch[1].trim();
-            }
+            const nameMatch = clientName.match(/^([A-Za-z][A-Za-z\s&+'.]+)/);
+            if (nameMatch) clientName = nameMatch[1].trim();
           }
           
-          // Convert hour to 24-hour format (assume 1-7 is PM, 8-12 is AM)
-          const hour24 = hour >= 1 && hour <= 7 ? hour + 12 : hour;
+          let hour24;
+          if (ampmH === 'PM' && hour !== 12) hour24 = hour + 12;
+          else if (ampmH === 'AM' && hour === 12) hour24 = 0;
+          else if (ampmH) hour24 = hour;
+          else hour24 = hour >= 1 && hour <= 7 ? hour + 12 : hour;
           
-          if (clientName && clientName.length > 1 && hour24 >= 7 && hour24 <= 20 && !skipWords.test(clientName)) {
+          if (clientName && clientName.length > 1 && !isReasoningName(clientName) && hour24 >= 0 && hour24 <= 23) {
             const displayHour = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
             const period = hour24 >= 12 ? 'PM' : 'AM';
             const startTime = `${displayHour}:00 ${period}`;
             
-            // Default to 45-minute sessions
-            const endHour24 = hour24 + Math.floor(45 / 60);
-            const endMinutesFinal = 45 % 60;
-            const endDisplayHour = endHour24 > 12 ? endHour24 - 12 : (endHour24 === 0 ? 12 : endHour24);
-            const endPeriod = endHour24 >= 12 ? 'PM' : 'AM';
-            const endTime = `${endDisplayHour}:${endMinutesFinal.toString().padStart(2, '0')} ${endPeriod}`;
-            
-            // Assign date based on detected format
-            let assignedDate, assignedDateIndex;
-            if (isGroupedByHour) {
-              // Rotation method: rotate through dates within each hour group
-              if (currentHour !== hour24) {
-                currentHour = hour24;
-                hourAppointmentIndex = 0; // Reset for new hour
-              }
-              assignedDateIndex = hourAppointmentIndex % sortedDates.length;
-              assignedDate = sortedDates[assignedDateIndex];
-              hourAppointmentIndex++;
-            } else {
-              // Date-tracking method: use current date from date headers
-              assignedDate = currentDate;
-              assignedDateIndex = currentDateIndex;
-            }
+            const endMinTotal = hour24 * 60 + 45;
+            const endH24 = Math.floor(endMinTotal / 60);
+            const endM = endMinTotal % 60;
+            const endDisplay = endH24 > 12 ? endH24 - 12 : (endH24 === 0 ? 12 : endH24);
+            const endTime = `${endDisplay}:${endM.toString().padStart(2, '0')} ${endH24 >= 12 ? 'PM' : 'AM'}`;
             
             appointments.push({
               id: Date.now() + Math.random() + appointments.length,
-              ...resolveDateAndColumn(assignedDate, assignedDateIndex),
-              startTime: startTime,
-              endTime: endTime,
-              duration: 45,
+              date: currentDate,
+              dayColumn: currentDateIndex,
+              startTime, endTime, duration: 45,
               rawText: clientName,
               suggestedClient: null,
               suggestedCPT: '90834',
               confidence: 0.8
             });
-            console.log(`✓ Found: ${startTime} - ${clientName} on ${assignedDate} (from line: "${line}")`);
+            console.log(`✓ ${startTime} - ${clientName} on ${currentDate}`);
             continue;
-          }
-        }
-        
-        // Pattern 3: Hour number on one line, name on next line
-        const hourMatch = lineContent.match(hourOnlyPattern);
-        if (hourMatch && i + 1 < lines.length) {
-          const hour = parseInt(hourMatch[1]);
-          const nextLine = lines[i + 1];
-          
-          // Check if next line has a name (not just numbers or common words)
-          const namePattern = /^([A-Za-z][A-Za-z\s+]+?)(?:\s+(pd|upd|\d+\/\d+|\d+:\d+))?$/i;
-          const nameMatch = nextLine.match(namePattern);
-          
-          if (nameMatch && hour >= 7 && hour <= 20) {
-            let clientName = nameMatch[1].trim();
-            
-            // Clean up name
-            clientName = clientName.replace(/\s+(pd|upd|\d+\/\d+)$/i, '').trim();
-            
-            // Skip if it looks like a date or common word
-            if (clientName && clientName.length > 1 && !skipWords.test(clientName)) {
-              let hour24 = hour;
-              if (hour >= 1 && hour <= 7) {
-                hour24 += 12;
-              }
-              
-              const displayHour = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-              const period = hour24 >= 12 ? 'PM' : 'AM';
-              const startTime = `${displayHour}:00 ${period}`;
-              
-              const endHour24 = hour24 + 1;
-              const endDisplayHour = endHour24 > 12 ? endHour24 - 12 : (endHour24 === 0 ? 12 : endHour24);
-              const endPeriod = endHour24 >= 12 ? 'PM' : 'AM';
-              const endTime = `${endDisplayHour}:00 ${endPeriod}`;
-              
-              // Assign date based on format
-              let assignedDate, assignedDateIndex;
-              if (isGroupedByHour) {
-                // Rotation method: rotate through dates within each hour group
-                if (currentHour !== hour24) {
-                  currentHour = hour24;
-                  hourAppointmentIndex = 0;
-                }
-                assignedDateIndex = hourAppointmentIndex % sortedDates.length;
-                assignedDate = sortedDates[assignedDateIndex];
-                hourAppointmentIndex++;
-              } else {
-                // Date-tracking method: use current date
-                assignedDate = currentDate;
-                assignedDateIndex = currentDateIndex;
-              }
-              
-              appointments.push({
-                id: Date.now() + Math.random() + appointments.length,
-                ...resolveDateAndColumn(assignedDate, assignedDateIndex),
-                startTime: startTime,
-                endTime: endTime,
-                duration: 60,
-                rawText: clientName,
-                suggestedClient: null,
-                suggestedCPT: '90834',
-                confidence: 0.7
-              });
-              console.log(`Found appointment (hour on line, name next): ${startTime} - ${clientName} on ${assignedDate}`);
-            }
-          }
-        }
-        
-        // Pattern 4: Name-only lines (no time) - when in date-tracking mode with currentDate
-        // e.g. "Jen", "Ashton", "Joanie O/", "Tess", "No Dent?"
-        if (!isGroupedByHour && currentDate && lineColIdx === null) {
-          const nameOnlyMatch = lineContent.match(/^([A-Za-z][A-Za-z\s'&-]+?)(?:\s*[O/?!]|\s+\d|\s*$)/i);
-          if (nameOnlyMatch) {
-            let clientName = nameOnlyMatch[1].trim();
-            clientName = clientName.replace(/\s*[O/?!]\s*$/, '').trim();
-            if (clientName.length >= 2 && !skipWords.test(clientName) && !/^\d+$/.test(clientName)) {
-              appointments.push({
-                id: Date.now() + Math.random() + appointments.length,
-                date: currentDate,
-                dayColumn: currentDateIndex,
-                startTime: '—',
-                endTime: '—',
-                duration: 45,
-                rawText: clientName,
-                suggestedClient: null,
-                suggestedCPT: '90834',
-                confidence: 0.6
-              });
-              console.log(`✓ Found (no time): ${clientName} on ${currentDate}`);
-              continue;
-            }
           }
         }
       }
@@ -2683,52 +2000,17 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
       
       console.log('State updated. Check UI for appointments.');
     } catch (error) {
-      console.error('OCR Error:', error);
-      console.error('Error stack:', error.stack);
-      console.error('Error message:', error.message);
-      console.log('Error processing image. Falling back to mock data.');
-      
-      // Fall back to mock data on any error
-      const today = new Date().toISOString().split('T')[0];
-      
-      const mockData = [
-        {
-          id: Date.now() + Math.random(),
-          dayColumn: 0,
-          date: today,
-          startTime: '9:00 AM',
-          endTime: '9:45 AM',
-          duration: 45,
-          rawText: '',
-          suggestedClient: null,
-          suggestedCPT: '90834',
-          confidence: 0
-        },
-        {
-          id: Date.now() + Math.random() + 1,
-          dayColumn: 0,
-          date: today,
-          startTime: '2:00 PM',
-          endTime: '2:30 PM',
-          duration: 30,
-          rawText: '',
-          suggestedClient: null,
-          suggestedCPT: '90832',
-          confidence: 0
-        }
-      ];
-      
-      setExtractedAppointments(mockData);
+      console.error('Parse error:', error);
       setIsProcessing(false);
     }
   };
   
   const handlePasteOCRText = () => {
     if (!ocrText.trim()) {
-      alert('Please paste the OCR text first');
+      alert('Please paste the schedule text first');
       return;
     }
-    parseOCRText(ocrText, clients, sessions, { importWeekStart });
+    parseOCRText(ocrText, clients, sessions);
   };
   
   const suggestClient = (appointment, clientList, sessionHistory) => {
@@ -2849,26 +2131,25 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
         Import Schedule
       </h2>
       
-      <div style={{ marginBottom: '1.5rem', padding: '1rem', background: 'rgba(255,255,255,0.1)', borderRadius: '12px' }}>
-        <label style={{ display: 'block', marginBottom: '0.5rem', color: 'white', fontSize: '0.95rem' }}>
-          Schedule week of (for dates like "16 Monday"):
-        </label>
-        <input
-          type="date"
-          value={importWeekStart}
-          onChange={(e) => setImportWeekStart(e.target.value)}
-          style={{
-            padding: '0.5rem 1rem',
-            borderRadius: '8px',
-            border: '1px solid rgba(255,255,255,0.3)',
-            background: 'white',
-            fontSize: '1rem'
-          }}
-        />
-        <p style={{ marginTop: '0.5rem', color: 'rgba(255,255,255,0.8)', fontSize: '0.85rem' }}>
-          Pick the Monday of the week you're importing. Dates without month (16, 17, 18...) will use this.
-        </p>
-      </div>
+      
+      
+      
+      
+      {(lastVeniceOutput || lastVeniceError) ? (
+        <div style={{ marginBottom: '1.5rem', padding: '1rem', background: 'rgba(255,255,255,0.15)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.3)' }}>
+          <div style={{ color: 'white', fontWeight: 600, marginBottom: '0.5rem' }}>Venice output / error</div>
+          {lastVeniceError ? (
+            <pre style={{ margin: 0, padding: '0.75rem', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', color: '#fecaca', fontSize: '0.85rem', overflow: 'auto', maxHeight: '200px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {lastVeniceError}
+            </pre>
+          ) : null}
+          {lastVeniceOutput ? (
+            <pre style={{ margin: lastVeniceError ? '0.75rem 0 0' : 0, padding: '0.75rem', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', color: '#bbf7d0', fontSize: '0.85rem', overflow: 'auto', maxHeight: '240px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {lastVeniceOutput}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
       
       {!photoFile && !showTextInput ? (
         <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
@@ -2892,7 +2173,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
             }}
           >
             <Camera size={20} />
-            Upload Image & Run OCR
+            Upload Image & Parse Schedule
           </button>
           <button
             onClick={() => setShowTextInput(true)}
@@ -2927,15 +2208,15 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
           boxShadow: '0 10px 30px rgba(0,0,0,0.1)'
         }}>
           <h3 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '1rem' }}>
-            Paste OCR Text from HandwritingOCR.com
+            Paste Schedule Text
           </h3>
           <p style={{ color: '#666', marginBottom: '1rem', fontSize: '0.9rem' }}>
-            Copy the text output from handwritingocr.com and paste it here. The app will automatically extract dates, times, and client names.
+            Paste Venice AI schedule output or any schedule text here. Dates, times, and client names will be extracted automatically.
           </p>
           <textarea
             value={ocrText}
             onChange={(e) => setOcrText(e.target.value)}
-            placeholder="Paste OCR text here..."
+            placeholder="Paste schedule text here..."
             style={{
               width: '100%',
               height: '300px',
@@ -3102,7 +2383,7 @@ const ImportView = ({ clients, sessions, cptCodes, saveSession, saveClient }) =>
                 background: 'white',
                 borderRadius: '12px'
               }}>
-                No appointments found. Try pasting your OCR text again.
+                No appointments found. Try pasting your schedule text again.
               </div>
             ) : (() => {
               // Sort appointments by date, then by time
@@ -3872,40 +3153,27 @@ const ClientsView = ({ clients, saveClient }) => {
     await saveClient(client);
   };
   
-  const exportClients = () => {
-    // Export all clients (including archived) as JSON
+  const exportClients = async () => {
     const exportData = {
       version: '1.0',
       exportDate: new Date().toISOString(),
       clients: clients
     };
-    
-    const jsonString = JSON.stringify(exportData, null, 2);
-    const blob = new Blob([jsonString], { type: 'application/json' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
     const filename = `clients_backup_${new Date().toISOString().split('T')[0]}.json`;
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    alert(`Exported ${clients.length} client(s) to ${filename}`);
+    const r = await saveJsonToDevice(exportData, filename);
+    if (r.aborted) return;
+    localStorage.setItem('lastBackupExportDate', new Date().toISOString());
+    const where = r.mode === 'picker' ? 'to the folder you chose' : 'check your Downloads folder';
+    alert(`Saved ${clients.length} client(s) as ${filename} (${where}).`);
   };
-  
-  const exportBulkUpdateTemplate = () => {
-    // Export a CSV template with current client names for bulk update
+
+  const exportBulkUpdateTemplate = async () => {
     let csv = 'Name,FullName,Email,DOB,Diagnosis\n';
-    
-    activeClients.forEach(client => {
-      const name = client.name.replace(/,/g, ';'); // Replace commas in names
-      const fullName = (client.fullName || '').replace(/,/g, ';');
-      const email = (client.email || '').replace(/,/g, '');
-      // Format DOB as mm/dd/yyyy for CSV
+
+    activeClients.forEach((client) => {
+      const name = client.name;
+      const fullName = client.fullName || '';
+      const email = client.email || '';
       let dob = '';
       if (client.dateOfBirth) {
         try {
@@ -3924,28 +3192,28 @@ const ClientsView = ({ clients, saveClient }) => {
             dob = `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
           }
         } catch (e) {
-          // Keep original if formatting fails
-          dob = client.dateOfBirth;
+          dob = String(client.dateOfBirth);
         }
       }
-      const diagnosis = (client.diagnosis || '').replace(/,/g, ';');
-      csv += `${name},${fullName},${email},${dob},${diagnosis}\n`;
+      const diagnosis = client.diagnosis || '';
+      csv +=
+        [
+          formatCsvBulkField(name),
+          formatCsvBulkField(fullName),
+          formatCsvBulkField(email),
+          formatCsvBulkField(dob),
+          formatCsvBulkField(diagnosis)
+        ].join(',') + '\n';
     });
     
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
     const filename = `bulk_update_template_${new Date().toISOString().split('T')[0]}.csv`;
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    alert(`Exported template with ${activeClients.length} client(s) to ${filename}\n\nFill in the Email and Diagnosis columns, then paste the contents back into the Bulk Update form.`);
+    const r = await saveCsvToDevice(csv, filename);
+    if (r.aborted) return;
+    alert(
+      `Saved template with ${activeClients.length} client(s) as ${filename}.\n\n` +
+        'Fields with commas are quoted in the CSV so columns stay aligned. ' +
+        'Paste back into Bulk Update, or use JSON format to avoid spreadsheet issues.'
+    );
   };
   
   const handleImportClients = async (event) => {
@@ -4033,6 +3301,17 @@ const ClientsView = ({ clients, saveClient }) => {
       alert('Please enter data to update');
       return;
     }
+
+    const looksLikeDobOrDate = (s) => {
+      if (!s || typeof s !== 'string') return false;
+      const t = s.trim();
+      return (
+        /^\d{1,4}[-/]\d{1,2}[-/]\d{2,4}$/.test(t) ||
+        /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(t)
+      );
+    };
+    const looksLikeEmailCell = (s) =>
+      typeof s === 'string' && /^[^\s,]+@[^\s,]+\.[^\s,]+$/.test(s.trim());
     
     try {
       // Parse the bulk update text
@@ -4062,18 +3341,23 @@ const ClientsView = ({ clients, saveClient }) => {
         const hasHeader = firstLine.includes('name') && (firstLine.includes('email') || firstLine.includes('diagnosis'));
         const startIndex = hasHeader ? 1 : 0;
         
-        // Check if header includes fullName and dateOfBirth
-        const hasFullName = hasHeader && firstLine.includes('fullname');
-        const hasDOB = hasHeader && (firstLine.includes('dob') || firstLine.includes('dateofbirth'));
-        
         // If header exists, determine column indices
         let nameIndex = -1, fullNameIndex = -1, emailIndex = -1, dobIndex = -1, diagnosisIndex = -1;
         if (hasHeader) {
-          const headerParts = lines[0].split(',').map(p => p.trim().toLowerCase());
+          const headerParts = parseCsvBulkLine(lines[0]).map((p) => p.toLowerCase());
           nameIndex = headerParts.findIndex(h => h.includes('name') && !h.includes('full'));
-          fullNameIndex = headerParts.findIndex(h => h.includes('fullname'));
+          fullNameIndex = headerParts.findIndex(
+            h =>
+              h.includes('fullname') ||
+              (h.includes('full') && h.includes('name') && !h.includes('email'))
+          );
           emailIndex = headerParts.findIndex(h => h.includes('email'));
-          dobIndex = headerParts.findIndex(h => h.includes('dob') || h.includes('dateofbirth'));
+          dobIndex = headerParts.findIndex(
+            h =>
+              h.includes('dob') ||
+              h.includes('dateofbirth') ||
+              (h.includes('birth') && h.includes('date'))
+          );
           diagnosisIndex = headerParts.findIndex(h => h.includes('diagnosis'));
         }
         
@@ -4081,10 +3365,14 @@ const ClientsView = ({ clients, saveClient }) => {
           const line = lines[i].trim();
           if (!line) continue;
           
-          // Try pipe-separated first, then comma-separated
-          let parts = line.split('|').map(p => p.trim());
-          if (parts.length < 2) {
-            parts = line.split(',').map(p => p.trim());
+          // Pipe | Excel tabs | RFC CSV (quoted commas in diagnosis, etc.)
+          let parts;
+          if (line.includes('|')) {
+            parts = line.split('|').map((p) => p.trim());
+          } else if (line.includes('\t')) {
+            parts = line.split(/\t+/).map((p) => p.trim());
+          } else {
+            parts = parseCsvBulkLine(line);
           }
           
           if (parts.length >= 2) {
@@ -4103,27 +3391,37 @@ const ClientsView = ({ clients, saveClient }) => {
               if (dobIndex >= 0 && dobIndex < parts.length) dateOfBirth = parts[dobIndex] || '';
               if (diagnosisIndex >= 0 && diagnosisIndex < parts.length) diagnosis = parts[diagnosisIndex] || '';
             } else {
-              // Fallback to positional parsing
-              if (hasDOB && hasFullName && parts.length >= 5) {
-                // Format: Name,FullName,Email,DOB,Diagnosis
+              // No header: infer columns (detect DOB vs email to avoid wrong-field imports)
+              if (parts.length >= 5) {
                 fullName = parts[1] || '';
                 email = parts[2] || '';
                 dateOfBirth = parts[3] || '';
                 diagnosis = parts[4] || '';
-              } else if (hasDOB && parts.length >= 4) {
-                // Format: Name,Email,DOB,Diagnosis
-                email = parts[1] || '';
-                dateOfBirth = parts[2] || '';
-                diagnosis = parts[3] || '';
-              } else if (hasFullName && parts.length >= 4) {
-                // Format: Name,FullName,Email,Diagnosis
-                fullName = parts[1] || '';
-                email = parts[2] || '';
-                diagnosis = parts[3] || '';
-              } else if (parts.length >= 3) {
-                // Format: Name,Email,Diagnosis (backward compatible)
-                email = parts[1] || '';
-                diagnosis = parts[2] || '';
+              } else if (parts.length === 4) {
+                if (looksLikeDobOrDate(parts[1]) && looksLikeEmailCell(parts[2])) {
+                  dateOfBirth = parts[1] || '';
+                  email = parts[2] || '';
+                  diagnosis = parts[3] || '';
+                } else if (looksLikeEmailCell(parts[1]) && looksLikeDobOrDate(parts[2])) {
+                  email = parts[1] || '';
+                  dateOfBirth = parts[2] || '';
+                  diagnosis = parts[3] || '';
+                } else {
+                  fullName = parts[1] || '';
+                  email = parts[2] || '';
+                  diagnosis = parts[3] || '';
+                }
+              } else if (parts.length === 3) {
+                if (looksLikeEmailCell(parts[1])) {
+                  email = parts[1] || '';
+                  diagnosis = parts[2] || '';
+                } else if (looksLikeDobOrDate(parts[1]) && looksLikeEmailCell(parts[2])) {
+                  dateOfBirth = parts[1] || '';
+                  email = parts[2] || '';
+                } else {
+                  email = parts[1] || '';
+                  diagnosis = parts[2] || '';
+                }
               } else {
                 email = parts[1] || '';
               }
@@ -4139,11 +3437,12 @@ const ClientsView = ({ clients, saveClient }) => {
       
       if (updates.length === 0) {
         alert('No valid data found. Please use one of these formats:\n\n' +
-          'CSV: Name,FullName,Email,DOB,Diagnosis\n' +
+          'CSV (quoted fields OK): Name,FullName,Email,DOB,Diagnosis\n' +
           'CSV (simple): Name,Email,Diagnosis\n' +
           'CSV (with DOB): Name,Email,DOB,Diagnosis\n' +
+          'Excel: copy rows from sheet (tab-separated) or use Download CSV Template\n' +
           'Pipe: Name | FullName | Email | DOB | Diagnosis\n' +
-          'JSON: [{"name": "...", "fullName": "...", "email": "...", "dateOfBirth": "...", "diagnosis": "..."}]');
+          'JSON (safest): [{"name":"...","fullName":"...","email":"...","dateOfBirth":"...","diagnosis":"..."}]');
         return;
       }
       
@@ -5001,26 +4300,15 @@ const ExportView = ({ sessions, clients }) => {
     });
   };
   
-  const downloadCSV = () => {
-    // Create a blob with the CSV content
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    // Generate filename with date range
+  const downloadCSV = async () => {
     const dateRangeStr = dateRange === 'custom' && startDate && endDate 
       ? `${startDate}_to_${endDate}`
       : dateRange;
     const filename = `billing_export_${dateRangeStr}_${new Date().toISOString().split('T')[0]}.csv`;
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    alert('CSV file downloaded! Open it in Excel and the columns will be automatically formatted.');
+    const r = await saveCsvToDevice(csvContent, filename);
+    if (r.aborted) return;
+    const where = r.mode === 'picker' ? 'Saved where you chose.' : 'Saved to your Downloads folder (or your browser’s default).';
+    alert(`CSV file saved. ${where} Open it in Excel when ready.`);
   };
   
   const filtered = getFilteredSessions();
@@ -5310,23 +4598,7 @@ const ExportView = ({ sessions, clients }) => {
 };
 
 // Invoicing View Component
-const InvoicingView = ({ sessions, clients, saveSession }) => {
-  const [providerInfo, setProviderInfo] = useState(() => {
-    const saved = localStorage.getItem('providerInfo');
-    const defaults = {
-      providerName: '',
-      company: '',
-      email: '',
-      phone: '',
-      fax: '',
-      address: '',
-      npi: '',
-      taxId: '',
-      signatureImage: ''
-    };
-    return saved ? { ...defaults, ...JSON.parse(saved) } : defaults;
-  });
-  
+const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProviderInfo }) => {
   const [selectedSessions, setSelectedSessions] = useState([]);
   const [invoicePreview, setInvoicePreview] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -5341,23 +4613,13 @@ const InvoicingView = ({ sessions, clients, saveSession }) => {
   const [clientPaidStatus, setClientPaidStatus] = useState({}); // Track which clients have paid
   const signaturePasteRef = useRef(null);
   const googleButtonRef = useRef(null);
-  
-  // Save provider info to localStorage when it changes
-  useEffect(() => {
-    localStorage.setItem('providerInfo', JSON.stringify(providerInfo));
-    // Show save confirmation
-    setSaveStatus('saved');
-    const timer = setTimeout(() => setSaveStatus(''), 2000);
-    return () => clearTimeout(timer);
-  }, [providerInfo]);
-  
-  // Explicit save function (for user feedback)
+
   const handleSaveProviderInfo = () => {
-    localStorage.setItem('providerInfo', JSON.stringify(providerInfo));
     setSaveStatus('saved');
     setTimeout(() => setSaveStatus(''), 2000);
     alert('Provider information saved successfully!');
   };
+
   
   const handleGoogleSignIn = (response) => {
     if (response.credential) {
@@ -5839,19 +5101,16 @@ const InvoicingView = ({ sessions, clients, saveSession }) => {
     const isPaid = clientPaidStatus[clientId] || false;
     const htmlContent = formatInvoiceHTML(clientInvoice, isPaid);
     
-    // Create a blob and download as HTML
     const blob = new Blob([htmlContent], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Invoice_${client.name}_${new Date().toISOString().split('T')[0]}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
+    const filename = `Invoice_${client.name}_${new Date().toISOString().split('T')[0]}.html`;
+    const r = await saveBlobToDevice(blob, filename, {
+      description: 'HTML invoice',
+      accept: { 'text/html': ['.html'] }
+    });
+    if (r.aborted) return;
     await markSessionsInvoiceSent(clientInvoice);
-    alert(`Invoice downloaded for ${client.name}. Sessions marked as invoice sent.`);
+    const where = r.mode === 'picker' ? 'saved where you chose' : 'saved (check Downloads)';
+    alert(`Invoice for ${client.name} ${where}. Sessions marked as invoice sent.`);
   };
   
   // Base64url encode for Gmail API raw message
