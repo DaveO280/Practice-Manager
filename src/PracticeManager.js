@@ -143,13 +143,16 @@ const PROVIDER_INFO_DEFAULTS = {
 
 // CPT Codes
 const DEFAULT_CPT_CODES = [
+  { code: '90791', description: 'Initial Evaluation', defaultDuration: 60 },
   { code: '90971', description: 'Brief Emotional/Behavioral Assessment', defaultDuration: 15 },
   { code: '90832', description: 'Psychotherapy 30 min', defaultDuration: 30 },
   { code: '90834', description: 'Psychotherapy 45 min', defaultDuration: 45 },
   { code: '90834-POS10', description: 'Individual Therapy 45 min - POS 10', defaultDuration: 45 },
   { code: '90837', description: 'Psychotherapy 60 min', defaultDuration: 60 },
   { code: '90846', description: 'Family Psychotherapy (without patient)', defaultDuration: 50 },
-  { code: '90847', description: 'Family Psychotherapy (with patient)', defaultDuration: 50 }
+  { code: '90847', description: 'Family Psychotherapy (with patient)', defaultDuration: 50 },
+  { code: '99446', description: 'Interprofessional Consultation', defaultDuration: 60 },
+  { code: '99484', description: 'Behavioral Health Integration', defaultDuration: 30 }
 ];
 
 const PracticeManager = () => {
@@ -4611,6 +4614,10 @@ const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProvid
   const [invoiceFilterClientId, setInvoiceFilterClientId] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
   const [clientPaidStatus, setClientPaidStatus] = useState({}); // Track which clients have paid
+  /** sessionId -> true when that line should include the no-show note on the invoice */
+  const [invoiceSessionNoShow, setInvoiceSessionNoShow] = useState({});
+  /** sessionId -> true when that line should include the late cancel note on the invoice */
+  const [invoiceSessionLateCancel, setInvoiceSessionLateCancel] = useState({});
   const signaturePasteRef = useRef(null);
   const googleButtonRef = useRef(null);
 
@@ -4828,11 +4835,23 @@ const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProvid
     });
     
     setInvoicePreview(sessionsByFirstName);
+    setInvoiceSessionNoShow({});
+    setInvoiceSessionLateCancel({});
     setShowPreview(true);
+  };
+
+  const buildInvoiceServiceDescription = (session, noShowMap, lateCancelMap) => {
+    const cptCode = session.cptCode || '90837';
+    const base = `${cptCode} Individual Therapy ${session.duration || 60} min`;
+    const notes = [];
+    if (noShowMap[session.id]) notes.push('No show, cannot be billed to insurance');
+    if (lateCancelMap[session.id]) notes.push('Late cancel, cannot be billed to insurance');
+    if (!notes.length) return base;
+    return `${base} — ${notes.join('; ')}`;
   };
   
   // Format invoice HTML for email
-  const formatInvoiceHTML = (clientSessions, isPaid = false) => {
+  const formatInvoiceHTML = (clientSessions, isPaid = false, sessionNoShow = {}, sessionLateCancel = {}) => {
     const { client, sessions: clientSessionsList } = clientSessions;
     
     // Calculate totals
@@ -5019,8 +5038,7 @@ const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProvid
           </thead>
           <tbody>
             ${clientSessionsList.map(session => {
-              const cptCode = session.cptCode || '90837';
-              const description = `${cptCode} Individual Therapy ${session.duration || 60} min`;
+              const description = buildInvoiceServiceDescription(session, sessionNoShow, sessionLateCancel);
               return `
                 <tr>
                   <td>${formatDate(session.date)}</td>
@@ -5069,7 +5087,7 @@ const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProvid
     if (!clientInvoice) return;
     
     const isPaid = clientPaidStatus[clientId] || false;
-    const htmlContent = formatInvoiceHTML(clientInvoice, isPaid);
+    const htmlContent = formatInvoiceHTML(clientInvoice, isPaid, invoiceSessionNoShow, invoiceSessionLateCancel);
     
     // Open HTML in a new window for preview
     const previewWindow = window.open('', '_blank');
@@ -5099,7 +5117,7 @@ const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProvid
     
     const client = clientInvoice.client;
     const isPaid = clientPaidStatus[clientId] || false;
-    const htmlContent = formatInvoiceHTML(clientInvoice, isPaid);
+    const htmlContent = formatInvoiceHTML(clientInvoice, isPaid, invoiceSessionNoShow, invoiceSessionLateCancel);
     
     const blob = new Blob([htmlContent], { type: 'text/html' });
     const filename = `Invoice_${client.name}_${new Date().toISOString().split('T')[0]}.html`;
@@ -5145,7 +5163,7 @@ const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProvid
     }
 
     const isPaid = clientPaidStatus[clientId] || false;
-    const htmlContent = formatInvoiceHTML(clientInvoice, isPaid);
+    const htmlContent = formatInvoiceHTML(clientInvoice, isPaid, invoiceSessionNoShow, invoiceSessionLateCancel);
     const subject = `Invoice for ${client.fullName || client.name || 'Client'}`;
 
     return new Promise((resolve, reject) => {
@@ -5853,33 +5871,40 @@ const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProvid
                   marginBottom: '1rem',
                   padding: '1rem',
                   background: '#f8f9fa',
-                  borderRadius: '8px'
+                  borderRadius: '8px',
+                  gap: '1rem',
+                  flexWrap: 'wrap'
                 }}>
-                  <label style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '0.5rem',
-                    cursor: 'pointer',
-                    fontSize: '1rem',
-                    fontWeight: 600
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={isPaid}
-                      onChange={(e) => {
-                        setClientPaidStatus(prev => ({
-                          ...prev,
-                          [clientId]: e.target.checked
-                        }));
-                      }}
-                      style={{ 
-                        width: '18px', 
-                        height: '18px', 
-                        cursor: 'pointer' 
-                      }}
-                    />
-                    <span>Client has paid this balance in full</span>
-                  </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: '1 1 220px' }}>
+                    <label style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '0.5rem',
+                      cursor: 'pointer',
+                      fontSize: '1rem',
+                      fontWeight: 600
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={isPaid}
+                        onChange={(e) => {
+                          setClientPaidStatus(prev => ({
+                            ...prev,
+                            [clientId]: e.target.checked
+                          }));
+                        }}
+                        style={{ 
+                          width: '18px', 
+                          height: '18px', 
+                          cursor: 'pointer' 
+                        }}
+                      />
+                      <span>Client has paid this balance in full</span>
+                    </label>
+                    <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 400, color: '#4b5563', lineHeight: 1.4 }}>
+                      Mark <strong>No show</strong> or <strong>Late cancel</strong> per session in the table below; each note is added to that row&apos;s service description on the invoice.
+                    </p>
+                  </div>
                   {(() => {
                     const sentSessionIds = clientSessionsList.map(s => s.id);
                     const allSent = sentSessionIds.length > 0 && sentSessionIds.every(id => sessions.find(s => s.id === id)?.invoiceSent);
@@ -6009,18 +6034,63 @@ const InvoicingView = ({ sessions, clients, saveSession, providerInfo, setProvid
                     </thead>
                     <tbody>
                       {clientSessionsList.map(session => {
-const date = parseLocalDate(session.date);
-                                        const cptCode = session.cptCode || '90837';
-                                        const description = `${cptCode} Individual Therapy ${session.duration || 60} min`;
-                                        return (
-                                          <tr key={session.id}>
-                                            <td style={{ border: '1px solid #ddd', padding: '8px' }}>
-                                              {date ? date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' }) : session.date}
-                                            </td>
-                                            <td style={{ border: '1px solid #ddd', padding: '8px' }}>
-                                              {date ? date.toLocaleDateString('en-US', { month: 'long' }) : ''}
+                        const date = parseLocalDate(session.date);
+                        const sid = session.id;
+                        const description = buildInvoiceServiceDescription(
+                          session,
+                          invoiceSessionNoShow,
+                          invoiceSessionLateCancel
+                        );
+                        const toggleNoShow = () => {
+                          if (sid == null) return;
+                          setInvoiceSessionNoShow((prev) => ({ ...prev, [sid]: !prev[sid] }));
+                        };
+                        const toggleLateCancel = () => {
+                          if (sid == null) return;
+                          setInvoiceSessionLateCancel((prev) => ({ ...prev, [sid]: !prev[sid] }));
+                        };
+                        return (
+                          <tr key={sid ?? `${session.clientId}-${session.date}-${session.time}`}>
+                            <td style={{ border: '1px solid #ddd', padding: '8px' }}>
+                              {date ? date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' }) : session.date}
                             </td>
-                            <td style={{ border: '1px solid #ddd', padding: '8px' }}>{description}</td>
+                            <td style={{ border: '1px solid #ddd', padding: '8px' }}>
+                              {date ? date.toLocaleDateString('en-US', { month: 'long' }) : ''}
+                            </td>
+                            <td style={{ border: '1px solid #ddd', padding: '8px', verticalAlign: 'top' }}>
+                              <div style={{ fontFamily: '"Times New Roman", serif', marginBottom: '8px' }}>{description}</div>
+                              {sid != null && (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    gap: '10px 14px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    fontFamily: '"Crimson Pro", Georgia, serif'
+                                  }}
+                                >
+                                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={!!invoiceSessionNoShow[sid]}
+                                      onChange={toggleNoShow}
+                                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                    />
+                                    <span>No show, cannot be billed to insurance</span>
+                                  </label>
+                                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={!!invoiceSessionLateCancel[sid]}
+                                      onChange={toggleLateCancel}
+                                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                    />
+                                    <span>Late cancel, cannot be billed to insurance</span>
+                                  </label>
+                                </div>
+                              )}
+                            </td>
                             <td style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'right' }}>
                               ${session.amountCharged || 0}
                             </td>
