@@ -146,6 +146,7 @@ const DEFAULT_CPT_CODES = [
   { code: '90791', description: 'Initial Evaluation', defaultDuration: 60 },
   { code: '90971', description: 'Brief Emotional/Behavioral Assessment', defaultDuration: 15 },
   { code: '90832', description: 'Psychotherapy 30 min', defaultDuration: 30 },
+  { code: '90832-POS10', description: 'Individual Therapy 30 min - POS 10', defaultDuration: 30 },
   { code: '90834', description: 'Psychotherapy 45 min', defaultDuration: 45 },
   { code: '90834-POS10', description: 'Individual Therapy 45 min - POS 10', defaultDuration: 45 },
   { code: '90837', description: 'Psychotherapy 60 min', defaultDuration: 60 },
